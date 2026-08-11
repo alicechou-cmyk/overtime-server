@@ -364,9 +364,12 @@ def init_db(seed_demo=None):
             admin_pw = auth.generate_password()
             note = "管理員（第一次登入會要求換密碼）"
 
+        # 雲端第一次部署可能同時有多個實例冷啟動，都想建立管理員。
+        # 加上 ON CONFLICT DO NOTHING，搶輸的那個就安靜跳過。
         conn.execute(
             "INSERT INTO users(account,name,email,role,password_hash,"
-            "must_change_password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            "must_change_password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(account) DO NOTHING",
             ("admin", "系統管理員", "admin@localhost", "admin",
              auth.hash_password(admin_pw), 1, ts, ts),
         )
@@ -377,12 +380,14 @@ def init_db(seed_demo=None):
             demo_hash = auth.hash_password(demo_pw)
             conn.execute(
                 "INSERT INTO users(account,name,email,emp_no,dept,role,password_hash,"
-                "must_change_password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "must_change_password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(account) DO NOTHING",
                 ("chen", "陳大明", "manager@company.com", "M001", "技術部", "user",
                  demo_hash, 0, ts, ts),
             )
-            manager_id = conn.execute(
-                "SELECT id FROM users WHERE account=?", ("chen",)).fetchone()["id"]
+            manager = conn.execute(
+                "SELECT id FROM users WHERE account=?", ("chen",)).fetchone()
+            manager_id = manager["id"] if manager else None
             for acct, name, email, emp_no in [
                 ("ming", "王小明", "ming@company.com", "E101"),
                 ("mei", "李小美", "mei@company.com", "E102"),
@@ -390,7 +395,7 @@ def init_db(seed_demo=None):
                 conn.execute(
                     "INSERT INTO users(account,name,email,emp_no,dept,role,approver_id,"
                     "password_hash,must_change_password,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account) DO NOTHING",
                     (acct, name, email, emp_no, "技術部", "user", manager_id,
                      demo_hash, 0, ts, ts),
                 )

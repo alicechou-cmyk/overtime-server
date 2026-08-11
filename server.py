@@ -94,7 +94,14 @@ def ensure_initialized():
     with _init_lock:
         if _initialized:
             return
-        db.init_db()
+        try:
+            db.init_db()
+        except Exception:
+            # 多個實例同時冷啟動時可能撞在一起建表。
+            # 只要資料表已經在了就當作成功，否則往外拋。
+            traceback.print_exc()
+            with db.db() as conn:
+                conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
         _initialized = True
 
 
