@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登入・假日加班登記</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  .login-page{max-width:420px;margin:0 auto;padding:4rem 1.25rem;}
+  .login-head{text-align:center;margin-bottom:2rem;}
+  .login-head .eyebrow{font-size:.78rem;letter-spacing:.14em;color:var(--amber);
+    text-transform:uppercase;font-weight:600;margin-bottom:.7rem;}
+  .login-head h1{font-size:1.5rem;margin:0 0 .5rem;}
+  .login-head p{color:var(--slate);font-size:.9rem;margin:0;}
+  .login-clock{font-family:'JetBrains Mono',monospace;font-size:2.2rem;font-weight:600;
+    letter-spacing:.02em;text-shadow:0 0 26px var(--amber-soft);margin-bottom:.3rem;}
+</style>
+</head>
+<body>
+<div class="login-page">
+  <div class="login-head">
+    <div class="eyebrow">假日加班・即時登記</div>
+    <div class="login-clock mono" id="clock">--:--:--</div>
+    <p id="dateLine">—</p>
+  </div>
+
+  <div class="card">
+    <h2>登入</h2>
+    <p class="hint">請用公司配發的帳號登入。忘記密碼請找管理員重設。</p>
+    <div id="msg"></div>
+    <form id="loginForm">
+      <div class="field">
+        <label for="account">帳號</label>
+        <input type="text" id="account" autocomplete="username" autocapitalize="off"
+               spellcheck="false" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">密碼</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary btn-block" id="submitBtn">登入</button>
+      </div>
+    </form>
+  </div>
+
+  <footer>加完班馬上登記，系統立刻蓋上時間戳、同步通知主管與 HR。<br>有紀錄，才有加班費。</footer>
+</div>
+
+<script src="/static/js/common.js"></script>
+<script>
+  function tick() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      App.pad(now.getHours()) + ':' + App.pad(now.getMinutes()) + ':' + App.pad(now.getSeconds());
+    document.getElementById('dateLine').textContent =
+      now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日（週' +
+      App.WD[now.getDay()] + '）';
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  function nextUrl() {
+    const raw = new URLSearchParams(location.search).get('next') || '/';
+    // 只接受站內相對路徑，避免被導到外部網站
+    return (raw.startsWith('/') && !raw.startsWith('//')) ? raw : '/';
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    const msg = document.getElementById('msg');
+    btn.disabled = true;
+    btn.textContent = '登入中…';
+    msg.innerHTML = '';
+    try {
+      const res = await App.api('/api/login', {
+        body: {
+          account: document.getElementById('account').value.trim(),
+          password: document.getElementById('password').value,
+        },
+        noRedirect: true,
+      });
+      location.href = res.user.must_change_password ? '/password' : nextUrl();
+    } catch (err) {
+      msg.innerHTML = '<div class="alert alert-error">' + App.esc(err.message) + '</div>';
+      document.getElementById('password').value = '';
+      document.getElementById('password').focus();
+      btn.disabled = false;
+      btn.textContent = '登入';
+    }
+  });
+</script>
+</body>
+</html>

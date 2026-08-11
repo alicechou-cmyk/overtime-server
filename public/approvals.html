@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>待我簽核・假日加班登記</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@700&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  .card h2{font-family:'Noto Serif TC',serif;}
+  .ot-item{background:var(--ink);border:1px solid var(--line);border-radius:12px;
+    padding:1rem 1.1rem;margin-bottom:.9rem;}
+  .ot-head{display:flex;justify-content:space-between;align-items:baseline;gap:.8rem;
+    flex-wrap:wrap;margin-bottom:.6rem;}
+  .ot-who{font-weight:700;font-size:1rem;}
+  .ot-meta{font-size:.8rem;color:var(--slate-dim);font-family:'JetBrains Mono',monospace;}
+  .ot-grid{display:grid;grid-template-columns:auto 1fr;gap:.3rem .8rem;font-size:.87rem;
+    margin-bottom:.8rem;}
+  .ot-grid .k{color:var(--slate);white-space:nowrap;}
+  .ot-actions{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;}
+  .ot-actions input{flex:1;min-width:180px;}
+</style>
+</head>
+<body>
+<nav class="nav" id="nav"></nav>
+<div class="page" style="max-width:760px;">
+  <div class="card">
+    <h2>待我簽核</h2>
+    <p class="hint">確認部屬的加班是否屬實。按下確認後，員工才能送出正式加班申請。</p>
+    <div class="tabs">
+      <button class="tab active" data-status="pending">待處理</button>
+      <button class="tab" data-status="all">全部</button>
+    </div>
+    <div id="list"><div class="empty">載入中…</div></div>
+  </div>
+</div>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/approvals.js"></script>
+</body>
+</html>

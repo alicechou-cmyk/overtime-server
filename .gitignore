@@ -1,0 +1,14 @@
+# 本機資料庫、初始密碼、連線紀錄、憑證 — 絕對不要進版控
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Vercel / 編輯器 / macOS
+.vercel/
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>後台管理・假日加班登記</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@700&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  .card h2{font-family:'Noto Serif TC',serif;}
+  .toolbar{display:flex;gap:.6rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:1rem;}
+  .toolbar .field{margin-bottom:0;}
+  .toolbar .field label{font-size:.76rem;}
+  .toolbar input,.toolbar select{min-width:130px;}
+  .cc-row{display:flex;gap:.5rem;margin-bottom:.5rem;align-items:center;}
+  .cc-row input:first-child{max-width:130px;}
+  .route-cell{font-size:.82rem;line-height:1.5;}
+  .route-cell .none{color:var(--stamp);}
+  .route-cell .cc{color:var(--slate);}
+  .mail-body{white-space:pre-line;font-size:.82rem;color:var(--slate);
+    background:var(--ink);border:1px solid var(--line);border-radius:8px;
+    padding:.7rem .8rem;margin-top:.5rem;max-height:14rem;overflow:auto;}
+  .pw-out{font-family:'JetBrains Mono',monospace;font-size:1.05rem;color:var(--amber);
+    background:var(--ink);border:1px dashed rgba(242,169,60,.5);border-radius:8px;
+    padding:.6rem .8rem;text-align:center;letter-spacing:.04em;user-select:all;}
+</style>
+</head>
+<body>
+<nav class="nav" id="nav"></nav>
+<div class="page page-wide">
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="dash">總覽</button>
+    <button class="tab" data-tab="users">員工與簽核路由</button>
+    <button class="tab" data-tab="records">加班紀錄</button>
+    <button class="tab" data-tab="mails">寄件匣</button>
+    <button class="tab" data-tab="holidays">假日表</button>
+    <button class="tab" data-tab="settings">系統設定</button>
+    <button class="tab" data-tab="audit">操作紀錄</button>
+  </div>
+
+  <!-- 總覽 -->
+  <section data-panel="dash">
+    <div class="stats" id="dashStats"></div>
+    <div class="card">
+      <h2>需要處理的設定</h2>
+      <p class="hint">這些狀況會讓通知信寄不出去，建議先補齊。</p>
+      <div id="dashIssues"><div class="empty">載入中…</div></div>
+    </div>
+  </section>
+
+  <!-- 員工與簽核路由 -->
+  <section data-panel="users" hidden>
+    <div class="card">
+      <h2>員工與簽核路由</h2>
+      <p class="hint">在這裡決定「每個人的加班登記要發給誰」：一位簽核主管（要按確認的人）
+        ＋ 若干副本收件人（HR 等，只收信不簽核）。</p>
+      <div class="toolbar">
+        <div class="field" style="flex:1;min-width:180px;">
+          <label for="userSearch">搜尋</label>
+          <input type="text" id="userSearch" placeholder="姓名、帳號、部門">
+        </div>
+        <button class="btn btn-primary" id="addUserBtn">＋ 新增員工</button>
+      </div>
+      <div id="usersTable"><div class="empty">載入中…</div></div>
+    </div>
+  </section>
+
+  <!-- 加班紀錄 -->
+  <section data-panel="records" hidden>
+    <div class="card">
+      <h2>加班紀錄</h2>
+      <p class="hint">全公司的登記紀錄。時間戳為伺服器寫入時間，不可修改。</p>
+      <div class="toolbar">
+        <div class="field"><label for="fUser">員工</label>
+          <select id="fUser"><option value="">全部</option></select></div>
+        <div class="field"><label for="fStatus">狀態</label>
+          <select id="fStatus">
+            <option value="">全部</option>
+            <option value="notified">已通知主管</option>
+            <option value="logged">已登記</option>
+            <option value="confirmed">主管已確認</option>
+            <option value="applied">已送出正式申請</option>
+            <option value="rejected">主管已退回</option>
+            <option value="voided">已作廢</option>
+          </select></div>
+        <div class="field"><label for="fFrom">起</label>
+          <input type="date" id="fFrom"></div>
+        <div class="field"><label for="fTo">迄</label>
+          <input type="date" id="fTo"></div>
+        <div class="field"><label for="fQ">關鍵字</label>
+          <input type="text" id="fQ" placeholder="姓名、內容、單號"></div>
+        <button class="btn btn-ghost btn-sm" id="recFilterBtn">查詢</button>
+        <button class="btn btn-ghost btn-sm" id="recResetBtn">清除</button>
+        <button class="btn btn-primary btn-sm" id="recCsvBtn">下載 CSV</button>
+      </div>
+      <div class="stats" id="recStats"></div>
+      <div id="recordsTable"><div class="empty">載入中…</div></div>
+    </div>
+  </section>
+
+  <!-- 寄件匣 -->
+  <section data-panel="mails" hidden>
+    <div class="card">
+      <h2>寄件匣</h2>
+      <p class="hint">系統產生的每一封通知信都留在這裡，可以查內容、看寄送狀態、重寄。</p>
+      <div id="mailModeNote"></div>
+      <div class="toolbar">
+        <div class="field"><label for="fMailStatus">狀態</label>
+          <select id="fMailStatus">
+            <option value="">全部</option>
+            <option value="preview">模擬（未寄出）</option>
+            <option value="queued">排隊中</option>
+            <option value="sent">已寄出</option>
+            <option value="failed">寄送失敗</option>
+          </select></div>
+      </div>
+      <div id="mailsTable"><div class="empty">載入中…</div></div>
+    </div>
+  </section>
+
+  <!-- 假日表 -->
+  <section data-panel="holidays" hidden>
+    <div class="card">
+      <h2>國定假日表</h2>
+      <p class="hint">系統靠這張表判斷「國定假日／例假（週日）／休息日（週六）」。
+        每年請更新一次（可從政府行政機關辦公日曆表整理後貼上）。</p>
+      <div class="row-2">
+        <div>
+          <h3 style="margin-top:0;">新增或修改單筆</h3>
+          <div class="field"><label for="hDate">日期</label>
+            <input type="date" id="hDate"></div>
+          <div class="field"><label for="hName">名稱</label>
+            <input type="text" id="hName" placeholder="例如：國慶日"></div>
+          <button class="btn btn-primary btn-sm" id="addHolidayBtn">儲存</button>
+        </div>
+        <div>
+          <h3 style="margin-top:0;">批次貼上</h3>
+          <div class="field">
+            <label for="hBulk">一行一筆，格式：2027-01-01,元旦</label>
+            <textarea id="hBulk" style="min-height:8rem;"
+              placeholder="2027-01-01,元旦&#10;2027-02-06,春節"></textarea>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="importHolidayBtn">匯入</button>
+        </div>
+      </div>
+      <h3>目前的假日</h3>
+      <div id="holidaysTable"><div class="empty">載入中…</div></div>
+    </div>
+  </section>
+
+  <!-- 系統設定 -->
+  <section data-panel="settings" hidden>
+    <div class="card">
+      <h2>系統設定</h2>
+      <p class="hint">公司名稱、全公司預設副本收件人、以及信件要不要真的寄出。</p>
+      <div id="settingsMsg"></div>
+      <div class="row-2">
+        <div class="field"><label for="sCompany">公司名稱</label>
+          <input type="text" id="sCompany"></div>
+        <div class="field">
+          <label for="sBaseUrl">系統對外網址（信裡的簽核連結會用這個）</label>
+          <input type="text" id="sBaseUrl" placeholder="http://192.168.1.20:8080"></div>
+      </div>
+
+      <h3>全公司預設副本收件人</h3>
+      <p class="hint">通常放 HR。每位員工可以在編輯畫面關掉這個預設，或再加自己的副本收件人。</p>
+      <div id="defaultCcRows"></div>
+      <button class="btn btn-ghost btn-sm" id="addDefaultCcBtn">＋ 新增一列</button>
+
+      <h3>通知信寄送方式</h3>
+      <div class="field">
+        <label for="sMailMode">模式</label>
+        <select id="sMailMode">
+          <option value="preview">模擬 — 只存進寄件匣，不真的寄出（示範用）</option>
+          <option value="smtp">SMTP — 透過下面設定的信箱真的寄出</option>
+        </select>
+      </div>
+      <div class="row-2">
+        <div class="field"><label for="sHost">SMTP 主機</label>
+          <input type="text" id="sHost" placeholder="smtp.gmail.com"></div>
+        <div class="field"><label for="sPort">連接埠</label>
+          <input type="text" id="sPort" placeholder="587"></div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label for="sSecurity">加密方式</label>
+          <select id="sSecurity">
+            <option value="starttls">STARTTLS（常見，埠 587）</option>
+            <option value="ssl">SSL/TLS（埠 465）</option>
+            <option value="none">無加密（不建議）</option>
+          </select></div>
+        <div class="field"><label for="sUser">帳號</label>
+          <input type="text" id="sUser" autocomplete="off"></div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label for="sPass">密碼（留空＝不變更）</label>
+          <input type="password" id="sPass" autocomplete="new-password"></div>
+        <div class="field"><label for="sFrom">寄件者信箱</label>
+          <input type="text" id="sFrom" placeholder="ot-system@company.com"></div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label for="sFromName">寄件者顯示名稱</label>
+          <input type="text" id="sFromName"></div>
+        <div class="field"><label for="sSessionDays">登入有效天數</label>
+          <input type="text" id="sSessionDays" placeholder="7"></div>
+      </div>
+
+      <div class="form-actions" style="justify-content:space-between;">
+        <button class="btn btn-ghost" id="smtpTestBtn">寄一封測試信</button>
+        <button class="btn btn-primary" id="saveSettingsBtn">儲存設定</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 操作紀錄 -->
+  <section data-panel="audit" hidden>
+    <div class="card">
+      <h2>操作紀錄</h2>
+      <p class="hint">登入、登記、簽核、後台修改都有留紀錄。</p>
+      <div id="auditTable"><div class="empty">載入中…</div></div>
+    </div>
+  </section>
+
+</div>
+<div id="modalHost"></div>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/admin.js"></script>
+</body>
+</html>

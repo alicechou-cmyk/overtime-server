@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>假日加班・即時登記</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  .card h2{font-family:'Noto Serif TC',serif;}
+  .hero{text-align:center;padding:2rem 0 2.25rem;}
+  .eyebrow{font-size:.78rem;letter-spacing:.14em;color:var(--amber);
+    text-transform:uppercase;font-weight:600;margin-bottom:.9rem;}
+  .clock{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;
+    font-weight:600;font-size:clamp(2.6rem,10vw,4rem);color:var(--paper);
+    text-shadow:0 0 26px var(--amber-soft);letter-spacing:.02em;}
+  .date-line{margin-top:.5rem;color:var(--slate);font-size:.95rem;display:flex;
+    align-items:center;justify-content:center;gap:.5rem;flex-wrap:wrap;}
+  .hero p.tagline{margin:1.4rem auto 0;max-width:34ch;color:var(--slate);font-size:.94rem;}
+
+  /* 蓋章 */
+  .stamp-wrap{background:var(--paper);color:var(--ink);border-radius:14px;padding:1.6rem;
+    text-align:center;position:relative;overflow:hidden;margin-bottom:1.25rem;}
+  .stamp-wrap .label{color:var(--slate-dim);font-size:.8rem;margin-bottom:.8rem;}
+  .stamp{display:inline-block;border:3px solid var(--stamp);color:var(--stamp);
+    mix-blend-mode:multiply;border-radius:10px;padding:.55rem 1.1rem;
+    font-family:'JetBrains Mono',monospace;font-weight:700;
+    font-size:clamp(1.05rem,4.4vw,1.5rem);letter-spacing:.02em;
+    animation:stampDown .5s cubic-bezier(.2,1.6,.4,1) both;animation-delay:.1s;}
+  .stamp small{display:block;font-family:'Noto Sans TC',sans-serif;font-weight:600;
+    font-size:.68rem;letter-spacing:.08em;margin-bottom:.15rem;}
+  @keyframes stampDown{
+    0%{transform:rotate(-6deg) scale(2.4);opacity:0;}
+    55%{transform:rotate(-6deg) scale(.9);opacity:1;}
+    100%{transform:rotate(-6deg) scale(1);opacity:1;}
+  }
+  .stamp-wrap .note{color:var(--slate-dim);font-size:.82rem;margin-top:1rem;}
+
+  /* 進度 */
+  .stepper{display:flex;flex-direction:column;gap:0;margin:1.2rem 0 .4rem;}
+  .step{display:flex;gap:.9rem;position:relative;padding-bottom:1.3rem;}
+  .step:last-child{padding-bottom:0;}
+  .step::before{content:'';position:absolute;left:11px;top:26px;bottom:0;width:2px;
+    background:var(--line);}
+  .step:last-child::before{display:none;}
+  .step-dot{width:24px;height:24px;border-radius:50%;flex:none;display:flex;
+    align-items:center;justify-content:center;border:2px solid var(--line);
+    color:var(--slate-dim);font-size:.72rem;font-weight:700;background:var(--panel);
+    z-index:1;transition:all .25s ease;}
+  .step.done .step-dot{background:var(--good);border-color:var(--good);color:#0d2318;}
+  .step.active .step-dot{border-color:var(--amber);color:var(--amber);
+    box-shadow:0 0 0 4px var(--amber-soft);}
+  .step.failed .step-dot{background:var(--bad);border-color:var(--bad);color:#fff;}
+  .step-title{font-weight:700;font-size:.92rem;color:var(--paper);}
+  .step.pending .step-title{color:var(--slate-dim);}
+  .step-desc{font-size:.8rem;color:var(--slate);margin-top:.15rem;}
+
+  /* 通知對象 */
+  .routing{background:var(--ink);border:1px solid var(--line);border-radius:12px;
+    padding:.9rem 1rem;margin-bottom:1rem;font-size:.85rem;}
+  .routing .rt-title{color:var(--slate);font-size:.78rem;margin-bottom:.5rem;}
+  .routing .rt-item{display:flex;justify-content:space-between;gap:.8rem;
+    padding:.25rem 0;flex-wrap:wrap;}
+  .routing .rt-item .who{font-weight:600;}
+  .routing .rt-item .addr{color:var(--slate);font-size:.8rem;}
+
+  /* 歷程 */
+  .stub{display:flex;justify-content:space-between;align-items:center;gap:.8rem;
+    background:var(--ink);border:1px solid var(--line);border-radius:10px;
+    padding:.8rem 1rem;margin-bottom:.6rem;cursor:pointer;flex-wrap:wrap;}
+  .stub:hover{border-color:var(--slate-dim);}
+  .stub:last-child{margin-bottom:0;}
+  .stub-left b{display:block;font-size:.9rem;}
+  .stub-left span{font-size:.76rem;color:var(--slate);}
+  .stub-right{text-align:right;margin-left:auto;}
+  .stub-right .ts{font-family:'JetBrains Mono',monospace;font-size:.72rem;
+    color:var(--slate-dim);}
+  .demo-tag{display:inline-block;font-size:.68rem;color:var(--amber);
+    border:1px dashed rgba(242,169,60,.5);padding:.1rem .45rem;border-radius:6px;
+    margin-left:.4rem;vertical-align:middle;}
+</style>
+</head>
+<body>
+<nav class="nav" id="nav"></nav>
+
+<div class="page">
+
+  <header class="hero">
+    <div class="eyebrow">假日加班・即時登記</div>
+    <div class="clock" id="clockTime">--:--:--</div>
+    <div class="date-line">
+      <span id="clockDate">—</span>
+      <span class="badge" id="todayBadge">—</span>
+    </div>
+    <p class="tagline">加完班馬上登記，系統立刻蓋上時間戳、同步通知主管與 HR。有紀錄，才有加班費。</p>
+  </header>
+
+  <!-- 登記表單 -->
+  <section class="card" id="formSection" hidden>
+    <h2>登記這次加班</h2>
+    <p class="hint">送出後時間戳由伺服器蓋上，無法事後補改。</p>
+
+    <div class="routing" id="routingBox"></div>
+    <div id="formMsg"></div>
+
+    <form id="logForm">
+      <div class="field">
+        <label for="nameInput">姓名</label>
+        <input type="text" id="nameInput" readonly>
+      </div>
+      <div class="field">
+        <label for="dateInput">加班日期</label>
+        <div class="date-with-badge">
+          <input type="date" id="dateInput" required>
+          <span class="badge" id="dateBadge">—</span>
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="startInput">開始時間</label>
+          <input type="time" id="startInput" value="14:00" required>
+        </div>
+        <div class="field">
+          <label for="endInput">結束時間</label>
+          <input type="time" id="endInput" value="18:00" required>
+        </div>
+      </div>
+      <div id="hoursHint" style="margin:-.4rem 0 1rem;font-size:.85rem;"></div>
+      <div class="field">
+        <label for="contentInput">加班內容</label>
+        <textarea id="contentInput" required
+          placeholder="例如：處理假日客服系統異常，排除後確認服務恢復正常。"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary" id="stampBtn">蓋章送出</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 結果：蓋章、通知、進度 -->
+  <section class="card" id="resultSection" hidden>
+    <div class="stamp-wrap">
+      <div class="label">系統時間戳</div>
+      <div class="stamp" id="stampText"><small>已登記</small>--</div>
+      <div class="note">這個時間，就是你當下確實在工作的證明。</div>
+    </div>
+
+    <div id="mailPreviews"></div>
+
+    <h2 style="margin-top:1.4rem;">申請進度</h2>
+    <div class="stepper" id="stepper"></div>
+    <div id="stepActions" style="margin-top:.6rem;"></div>
+
+    <div class="form-actions" style="justify-content:space-between;margin-top:1rem;">
+      <button type="button" class="btn btn-ghost btn-sm" id="newOneBtn">登記另一筆</button>
+      <button type="button" class="btn btn-danger btn-sm" id="voidBtn">作廢這筆</button>
+    </div>
+  </section>
+
+  <!-- 正式加班申請 -->
+  <section class="card" id="formalSection" hidden>
+    <h2>正式加班申請</h2>
+    <p class="hint">已關聯上面的登記時間戳，資料自動帶入。</p>
+    <div class="recap" id="recapBox"></div>
+    <form id="formalForm">
+      <div class="field">
+        <label for="formalNote">補充說明（選填，給 HR 存查用）</label>
+        <textarea id="formalNote" placeholder="例如：本次為客戶端 SLA 事件，已知會客戶"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="backToResult">← 返回</button>
+        <button type="submit" class="btn btn-primary" id="formalBtn">確認送出正式申請</button>
+      </div>
+    </form>
+    <div id="formalSuccess"></div>
+  </section>
+
+  <!-- 歷程紀錄 -->
+  <section class="card" id="historySection">
+    <h2>歷程紀錄</h2>
+    <p class="hint">每一筆加班，都留下完整的時間戳與往來紀錄。點一下可以看細節。</p>
+    <div id="historyList"><div class="empty">載入中…</div></div>
+  </section>
+
+  <footer id="pageFooter"></footer>
+</div>
+
+<div id="modalHost"></div>
+
+<script src="/static/js/common.js"></script>
+<script src="/static/js/index.js"></script>
+</body>
+</html>
