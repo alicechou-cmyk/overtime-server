@@ -236,7 +236,7 @@ def _send_via_resend(settings, to_email, subject, body):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=15) as res:
+        with urllib.request.urlopen(request, timeout=10) as res:
             res.read()
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:300]
@@ -262,9 +262,9 @@ def _send_via_smtp(settings, to_email, subject, body):
     msg["Date"] = formatdate(localtime=True)
 
     if security == "ssl":
-        server = smtplib.SMTP_SSL(host, port, timeout=25)
+        server = smtplib.SMTP_SSL(host, port, timeout=8)
     else:
-        server = smtplib.SMTP(host, port, timeout=25)
+        server = smtplib.SMTP(host, port, timeout=8)
     try:
         server.ehlo()
         if security == "starttls":
@@ -339,11 +339,64 @@ def start_worker():
 
 
 def wake(conn=None):
-    """有背景執行緒就叫醒它；沒有（雲端）就當場把信送掉。"""
+    """通知有新信要寄。
+
+    本機：叫醒背景執行緒。
+    雲端：不在這裡寄 —— 這裡還在請求的資料庫交易中，
+          萬一寄信卡住被平台中斷，連加班紀錄都會一起回滾掉。
+          改由 server.py 在交易 commit 之後呼叫 flush_after_commit()。
+    """
     if _worker_started:
         _wake.set()
-    elif conn is not None:
+
+
+def flush_after_commit(limit=3):
+    """交易已經 commit 之後才寄信，用獨立連線，一封一個交易。
+
+    寄信失敗不影響已經存好的加班紀錄；失敗的信留在寄件匣可以重寄。
+    """
+    if _worker_started:
+        return
+    try:
+        with db.db() as conn:
+            if db.get_setting(conn, "mail_mode", "preview") not in LIVE_MODES:
+                return
+            rows = conn.execute(
+                "SELECT id FROM mails WHERE status='queued' ORDER BY id LIMIT ?",
+                (limit,)
+            ).fetchall()
+            ids = [r["id"] for r in rows]
+        for mail_id in ids:
+            _send_one_committed(mail_id)
+    except Exception:
+        traceback.print_exc()
+
+
+def _send_one_committed(mail_id):
+    """寄一封信，並立刻把結果寫回去（獨立交易）。"""
+    try:
+        with db.db() as conn:
+            settings = db.all_settings(conn)
+            row = conn.execute(
+                "SELECT id,to_email,subject,body,status FROM mails WHERE id=?", (mail_id,)
+            ).fetchone()
+            if not row or row["status"] != "queued":
+                return
+            payload = (row["to_email"], row["subject"], row["body"])
         try:
-            deliver_pending(conn)
-        except Exception:
-            traceback.print_exc()
+            send_now(settings, *payload)
+            status, error = "sent", ""
+        except Exception as exc:
+            status = "failed"
+            error = "{}: {}".format(type(exc).__name__, exc)[:500]
+            print("[mailer] 寄送失敗 → {}：{}".format(payload[0], error))
+        with db.db() as conn:
+            if status == "sent":
+                conn.execute(
+                    "UPDATE mails SET status='sent', sent_at=?, error='' WHERE id=?",
+                    (db.now_str(), mail_id))
+            else:
+                conn.execute("UPDATE mails SET status='failed', error=? WHERE id=?",
+                             (error, mail_id))
+    except Exception:
+        traceback.print_exc()

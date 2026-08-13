@@ -367,6 +367,11 @@ class Handler(BaseHTTPRequestHandler):
             ctx = Ctx(self, conn, user, session, body, query, path_params)
             result = handler(ctx)
 
+        # 交易已經 commit（紀錄安全存好了）之後才寄信。
+        # 這樣寄信慢或失敗都不會影響已登記的資料。
+        if method != "GET":
+            mailer.flush_after_commit()
+
         if isinstance(result, api.RawResponse):
             return self._send(200, result.body, result.content_type, result.headers)
         return self._json(200, result if result is not None else {"ok": True})
