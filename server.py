@@ -26,6 +26,8 @@ MAX_BODY = 1024 * 1024
 
 # (method, 路徑 regex, handler, 權限)  權限：public | user | admin
 ROUTES = [
+    ("GET", r"^/api/setup-status$", api.get_setup_status, "public"),
+    ("POST", r"^/api/setup$", api.post_setup, "public"),
     ("POST", r"^/api/login$", api.post_login, "public"),
     ("POST", r"^/api/logout$", api.post_logout, "public"),
     ("GET", r"^/api/me$", api.get_me, "user"),
@@ -174,7 +176,12 @@ class Handler(BaseHTTPRequestHandler):
         proto = self.headers.get("X-Forwarded-Proto", "")
         if proto:
             return proto.split(",")[0].strip()
-        return "https" if getattr(self.server, "is_https", False) else "http"
+        # WSGI 模式沒有 socket 伺服器物件，改看 environ 帶進來的 url_scheme
+        explicit = getattr(self, "url_scheme", None)
+        if explicit:
+            return explicit
+        return "https" if getattr(getattr(self, "server", None),
+                                  "is_https", False) else "http"
 
     def request_origin(self):
         host = self.headers.get("Host", "")

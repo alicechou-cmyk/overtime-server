@@ -354,15 +354,14 @@ def init_db(seed_demo=None):
             return info
 
         ts = now_str()
-        if use_postgres():
-            admin_pw = os.environ.get("ADMIN_INITIAL_PASSWORD", "").strip()
-            if not admin_pw:
+        note = "管理員（第一次登入會要求換密碼）"
+        admin_pw = os.environ.get("ADMIN_INITIAL_PASSWORD", "").strip()
+        if not admin_pw:
+            if use_postgres():
+                # 雲端沒辦法把隨機密碼印給人看，一定要先設環境變數
                 info["needs_admin_password"] = True
                 return info
-            note = "管理員（第一次登入會要求換密碼）"
-        else:
             admin_pw = auth.generate_password()
-            note = "管理員（第一次登入會要求換密碼）"
 
         # 雲端第一次部署可能同時有多個實例冷啟動，都想建立管理員。
         # 加上 ON CONFLICT DO NOTHING，搶輸的那個就安靜跳過。

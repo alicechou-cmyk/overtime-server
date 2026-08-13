@@ -105,9 +105,7 @@ def post_login(ctx):
     ).fetchone()
     if row is None and ctx.conn.execute(
             "SELECT 1 FROM users LIMIT 1").fetchone() is None:
-        # 雲端第一次部署，還沒設定管理員初始密碼
-        raise ApiError(503, "系統尚未初始化：請在 Vercel 專案的環境變數設定 "
-                            "ADMIN_INITIAL_PASSWORD，然後重新部署一次。")
+        raise ApiError(503, "系統還沒完成初始設定，請重新整理這一頁。")
     ok = row is not None and row["active"] and auth.verify_password(
         password, row["password_hash"])
     if not ok:
@@ -123,6 +121,49 @@ def post_login(ctx):
     db.log_audit(ctx.conn, row["account"], "login", ip=ctx.ip)
     ctx.set_session_cookie(token)
     return {"ok": True, "user": user_public(row), "csrf": csrf}
+
+
+def get_setup_status(ctx):
+    """還沒有任何帳號時，登入頁會改成「建立管理員」的初始設定畫面。"""
+    has_user = ctx.conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+    return {
+        "needs_setup": not has_user,
+        "company_name": db.get_setting(ctx.conn, "company_name", ""),
+    }
+
+
+def post_setup(ctx):
+    """第一次啟用：由使用者自己在畫面上設定管理員密碼。
+
+    只有在資料庫完全沒有使用者時才能呼叫，之後永久關閉。
+    """
+    if ctx.conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+        raise ApiError(409, "系統已經設定過了，請直接登入")
+
+    password = ctx.body.get("password") or ""
+    err = auth.check_password_strength(password)
+    if err:
+        raise ApiError(400, err)
+
+    name = (ctx.body.get("name") or "").strip()[:40] or "系統管理員"
+    email = (ctx.body.get("email") or "").strip()[:120]
+    company = (ctx.body.get("company_name") or "").strip()[:60]
+    ts = db.now_str()
+
+    cur = ctx.conn.execute(
+        "INSERT INTO users(account,name,email,role,password_hash,"
+        "must_change_password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        ("admin", name, email, "admin", auth.hash_password(password), 0, ts, ts),
+    )
+    user_id = cur.lastrowid
+    if company:
+        db.set_setting(ctx.conn, "company_name", company)
+
+    token, csrf = auth.create_session(ctx.conn, user_id, ctx.ip, ctx.ua)
+    ctx.set_session_cookie(token)
+    db.log_audit(ctx.conn, "admin", "initial_setup", detail="建立第一個管理員帳號",
+                 ip=ctx.ip)
+    return {"ok": True, "account": "admin", "csrf": csrf}
 
 
 def post_logout(ctx):

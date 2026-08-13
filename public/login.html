@@ -27,7 +27,43 @@
     <p id="dateLine">—</p>
   </div>
 
-  <div class="card">
+  <!-- 第一次啟用：建立管理員 -->
+  <div class="card" id="setupCard" hidden>
+    <h2>初次設定</h2>
+    <p class="hint">這是第一次啟用，請先建立你的管理員帳號。
+      設定完成後就可以進後台新增員工。</p>
+    <div id="setupMsg"></div>
+    <form id="setupForm">
+      <div class="field">
+        <label for="setupCompany">公司名稱</label>
+        <input type="text" id="setupCompany" placeholder="玩美行動">
+      </div>
+      <div class="field">
+        <label for="setupName">你的姓名</label>
+        <input type="text" id="setupName" placeholder="王小明">
+      </div>
+      <div class="field">
+        <label for="setupEmail">你的 Email</label>
+        <input type="text" id="setupEmail" placeholder="you@company.com">
+      </div>
+      <div class="field">
+        <label for="setupPw">設定管理員密碼（至少 8 字，混用兩種以上字元）</label>
+        <input type="password" id="setupPw" autocomplete="new-password" required>
+      </div>
+      <div class="field">
+        <label for="setupPw2">再輸入一次密碼</label>
+        <input type="password" id="setupPw2" autocomplete="new-password" required>
+      </div>
+      <p class="hint" style="margin:0 0 .8rem;">登入帳號固定是 <b>admin</b>，
+        密碼就是你上面設定的這一組。</p>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary btn-block" id="setupBtn">
+          建立管理員帳號並開始使用</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" id="loginCard" hidden>
     <h2>登入</h2>
     <p class="hint">請用公司配發的帳號登入。忘記密碼請找管理員重設。</p>
     <div id="msg"></div>
@@ -62,6 +98,54 @@
   }
   tick();
   setInterval(tick, 1000);
+
+  // 沒有任何帳號 → 顯示初次設定；否則顯示登入
+  (async () => {
+    try {
+      const s = await App.api('/api/setup-status', { noRedirect: true });
+      document.getElementById(s.needs_setup ? 'setupCard' : 'loginCard').hidden = false;
+      if (s.needs_setup) {
+        document.getElementById('setupCompany').value = s.company_name || '';
+        document.getElementById('setupCompany').focus();
+      } else {
+        document.getElementById('account').focus();
+      }
+    } catch (err) {
+      document.getElementById('loginCard').hidden = false;
+      document.getElementById('msg').innerHTML =
+        '<div class="alert alert-error">' + App.esc(err.message) + '</div>';
+    }
+  })();
+
+  document.getElementById('setupForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('setupMsg');
+    const btn = document.getElementById('setupBtn');
+    const pw = document.getElementById('setupPw').value;
+    if (pw !== document.getElementById('setupPw2').value) {
+      msg.innerHTML = '<div class="alert alert-error">兩次輸入的密碼不一樣</div>';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '建立中…';
+    try {
+      await App.api('/api/setup', {
+        body: {
+          password: pw,
+          name: document.getElementById('setupName').value.trim(),
+          email: document.getElementById('setupEmail').value.trim(),
+          company_name: document.getElementById('setupCompany').value.trim(),
+        },
+        noRedirect: true,
+      });
+      msg.innerHTML = '<div class="alert alert-ok">建立完成，正在進入系統…</div>';
+      setTimeout(() => { location.href = '/admin'; }, 900);
+    } catch (err) {
+      msg.innerHTML = '<div class="alert alert-error">' + App.esc(err.message) + '</div>';
+      btn.disabled = false;
+      btn.textContent = '建立管理員帳號並開始使用';
+    }
+  });
 
   function nextUrl() {
     const raw = new URLSearchParams(location.search).get('next') || '/';
