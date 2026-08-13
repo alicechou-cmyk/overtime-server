@@ -289,6 +289,14 @@ class Handler(BaseHTTPRequestHandler):
             path = parsed.path.rstrip("/") or "/"
             query = parse_qs(parsed.query)
 
+            # Vercel 的 rewrite 會把路徑改寫成 /api/index，真正的路徑放在 __path。
+            # 這裡還原回來，路由才認得出是哪一支 API。
+            if "__path" in query:
+                real = query.pop("__path")[0] or "/"
+                if not real.startswith("/"):
+                    real = "/" + real
+                path = urlparse(real).path.rstrip("/") or "/"
+
             if path == "/health":
                 return self._json(200, {"ok": True, "time": db.now_str(),
                                         "backend": db.backend_name()})

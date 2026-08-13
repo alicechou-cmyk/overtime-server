@@ -1,6 +1,8 @@
 """日期判定與工時計算（以伺服器為準，前端只負責顯示）。"""
 
-from datetime import date, datetime
+from datetime import datetime
+
+import db
 
 WD = ["一", "二", "三", "四", "五", "六", "日"]  # datetime.weekday(): 0=一
 
@@ -80,4 +82,5 @@ def status_text(code):
 
 
 def today_str():
-    return date.today().isoformat()
+    """今天（台灣時間）"""
+    return db.local_now().date().isoformat()

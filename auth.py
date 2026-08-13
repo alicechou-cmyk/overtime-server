@@ -73,7 +73,7 @@ def is_locked(conn, account):
     if not row or not row["locked_until"]:
         return None
     until = datetime.fromisoformat(row["locked_until"])
-    if until > datetime.now():
+    if until > db.local_now():
         return until
     conn.execute(
         "UPDATE login_attempts SET fails=0, locked_until=NULL WHERE account=?", (account,)
@@ -91,7 +91,7 @@ def record_fail(conn, account):
         "SELECT fails FROM login_attempts WHERE account=?", (account,)
     ).fetchone()["fails"]
     if fails >= MAX_FAILS:
-        until = (datetime.now() + timedelta(minutes=LOCK_MINUTES)).replace(microsecond=0)
+        until = (db.local_now() + timedelta(minutes=LOCK_MINUTES)).replace(microsecond=0)
         conn.execute(
             "UPDATE login_attempts SET locked_until=? WHERE account=?",
             (until.isoformat(sep=" "), account),
@@ -110,7 +110,7 @@ def create_session(conn, user_id, ip="", ua=""):
     token = secrets.token_urlsafe(32)
     csrf = secrets.token_urlsafe(24)
     days = int(db.get_setting(conn, "session_days", "7") or 7)
-    created = datetime.now().replace(microsecond=0)
+    created = db.local_now().replace(microsecond=0)
     expires = created + timedelta(days=days)
     conn.execute(
         "INSERT INTO sessions(token,user_id,csrf,created_at,expires_at,ip,ua) "
@@ -132,7 +132,7 @@ def get_session_user(conn, token):
     ).fetchone()
     if not row:
         return None, None
-    if datetime.fromisoformat(row["expires_at"]) < datetime.now():
+    if datetime.fromisoformat(row["expires_at"]) < db.local_now():
         conn.execute("DELETE FROM sessions WHERE token=?", (token,))
         return None, None
     if not row["active"]:
@@ -157,5 +157,5 @@ def destroy_user_sessions(conn, user_id, keep_token=None):
 def purge_expired(conn):
     conn.execute(
         "DELETE FROM sessions WHERE expires_at < ?",
-        (datetime.now().isoformat(sep=" "),),
+        (db.local_now().isoformat(sep=" "),),
     )

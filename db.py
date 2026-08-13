@@ -11,7 +11,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -182,9 +182,20 @@ SEED_HOLIDAYS = {
 }
 
 
+# 時區：雲端主機通常是 UTC，但這個系統的時間戳必須是台灣時間才有意義。
+# 一律用固定時區換算，本機（台灣）與雲端算出來的結果就會一致。
+TZ_OFFSET_HOURS = float(os.environ.get("TZ_OFFSET_HOURS", "8"))
+LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
+
+
+def local_now():
+    """當地時間（預設台灣 UTC+8），回傳不帶時區的 datetime 方便比較與存檔。"""
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None, microsecond=0)
+
+
 def now_str():
     """本地時間字串，例：2026-08-11 18:05:03"""
-    return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+    return local_now().isoformat(sep=" ")
 
 
 # ---------- Postgres 轉接層 ----------
