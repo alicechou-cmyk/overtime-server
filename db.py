@@ -175,6 +175,9 @@ DEFAULT_SETTINGS = {
     "smtp_from_name": "假日加班登記系統",
     "resend_api_key": "",
     "session_days": "7",
+    # 送出正式申請後要導向的外部系統（例如公司的 HR 系統）；空白 = 不導向
+    "apply_redirect_url": "",
+    "apply_redirect_label": "前往 HR 系統填正式申請",
 }
 
 SEED_HOLIDAYS = {

@@ -170,6 +170,18 @@
       <div id="defaultCcRows"></div>
       <button class="btn btn-ghost btn-sm" id="addDefaultCcBtn">＋ 新增一列</button>
 
+      <h3>送出正式申請後的導向</h3>
+      <p class="hint">員工在系統裡送出正式申請之後，可以自動帶他到公司的 HR 系統完成正式簽核。
+        留空就不導向。<b>請填乾淨的入口網址，不要帶個人 token</b>（帶 token 的網址每個人按下去
+        都會用到同一個人的身分）。</p>
+      <div class="row-2">
+        <div class="field"><label for="sRedirectUrl">導向網址</label>
+          <input type="text" id="sRedirectUrl"
+                 placeholder="https://www.italent.cn/portal/iTalentHome"></div>
+        <div class="field"><label for="sRedirectLabel">按鈕文字</label>
+          <input type="text" id="sRedirectLabel" placeholder="前往 iTalent 填正式申請"></div>
+      </div>
+
       <h3>通知信寄送方式</h3>
       <div class="field">
         <label for="sMailMode">模式</label>

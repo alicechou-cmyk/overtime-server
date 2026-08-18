@@ -586,6 +586,8 @@ async function loadSettings() {
     $('sFrom').value = s.smtp_from || '';
     $('sFromName').value = s.smtp_from_name || '';
     $('sSessionDays').value = s.session_days || '7';
+    $('sRedirectUrl').value = s.apply_redirect_url || '';
+    $('sRedirectLabel').value = s.apply_redirect_label || '';
     $('sPass').placeholder = s.smtp_pass_set ? '已設定（留空＝不變更）' : '（未設定）';
     renderDefaultCc(s.default_cc);
   } catch (err) { App.err(err.message); }
@@ -609,6 +611,8 @@ $('saveSettingsBtn').addEventListener('click', async () => {
     smtp_from: $('sFrom').value.trim(),
     smtp_from_name: $('sFromName').value.trim(),
     session_days: $('sSessionDays').value.trim() || '7',
+    apply_redirect_url: $('sRedirectUrl').value.trim(),
+    apply_redirect_label: $('sRedirectLabel').value.trim(),
   };
   if ($('sPass').value) body.smtp_pass = $('sPass').value;
   try {

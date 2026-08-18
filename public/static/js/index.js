@@ -283,6 +283,39 @@ function showFormal() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+/* ---------- 送出後導向外部系統 ---------- */
+let redirectTimer = null;
+
+function startRedirectCountdown(url, seconds) {
+  let left = seconds || 6;
+  const text = $('countdownText');
+  const tick = () => {
+    if (!text) return;
+    text.textContent = left + ' 秒後自動前往…';
+    if (left <= 0) {
+      clearInterval(redirectTimer);
+      window.location.href = url;
+      return;
+    }
+    left -= 1;
+  };
+  tick();
+  redirectTimer = setInterval(tick, 1000);
+
+  const cancel = $('cancelRedirect');
+  if (cancel) {
+    cancel.addEventListener('click', (e) => {
+      e.preventDefault();
+      clearInterval(redirectTimer);
+      if (text) text.textContent = '已取消自動前往。';
+      App.ok('已取消，你可以稍後自己點按鈕前往');
+    });
+  }
+  // 使用者自己點按鈕就不用再倒數
+  const go = $('goExternal');
+  if (go) go.addEventListener('click', () => clearInterval(redirectTimer));
+}
+
 /* ---------- 輪詢狀態 ---------- */
 function startPoll() {
   stopPoll();
@@ -389,11 +422,28 @@ $('formalForm').addEventListener('submit', async (e) => {
       body: { note: $('formalNote').value.trim() },
     });
     CURRENT = res.record;
+    const redirectUrl = (App.me && App.me.apply_redirect_url) || '';
+    const redirectLabel = (App.me && App.me.apply_redirect_label) || '前往 HR 系統填正式申請';
+
     $('formalSuccess').innerHTML = '<div class="success-box" style="margin-top:1rem;">' +
       '<b>✅ 正式申請已送出</b><br>已關聯登記時間戳 ' + App.esc(CURRENT.stamped_at) +
-      '，單號 ' + App.esc(CURRENT.ticket_no) + '。</div>';
+      '，單號 ' + App.esc(CURRENT.ticket_no) + '。' +
+      (redirectUrl
+        ? '<div style="margin-top:1rem;">' +
+            '<a class="btn btn-primary" id="goExternal" href="' + App.esc(redirectUrl) +
+            '" target="_blank" rel="noopener noreferrer">' + App.esc(redirectLabel) +
+            ' →</a>' +
+            '<div style="margin-top:.6rem;font-size:.82rem;">' +
+              '<span id="countdownText"></span> ' +
+              '<a href="#" id="cancelRedirect" style="color:var(--slate);">留在這裡</a>' +
+            '</div>' +
+          '</div>'
+        : '') +
+      '</div>';
     loadHistory();
-    setTimeout(() => { showResult(CURRENT); }, 1500);
+
+    if (redirectUrl) startRedirectCountdown(redirectUrl);
+    else setTimeout(() => { showResult(CURRENT); }, 1500);
   } catch (err) {
     App.err(err.message);
     btn.disabled = false;

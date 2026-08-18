@@ -191,6 +191,9 @@ def get_me(ctx):
         "pending_approvals": pending,
         "company_name": db.get_setting(ctx.conn, "company_name", ""),
         "mail_mode": db.get_setting(ctx.conn, "mail_mode", "preview"),
+        "apply_redirect_url": db.get_setting(ctx.conn, "apply_redirect_url", ""),
+        "apply_redirect_label": db.get_setting(
+            ctx.conn, "apply_redirect_label", "前往 HR 系統填正式申請"),
     }
 
 

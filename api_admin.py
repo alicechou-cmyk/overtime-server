@@ -512,6 +512,7 @@ def post_holidays_import(ctx):
 PUBLIC_SETTING_KEYS = [
     "company_name", "base_url", "mail_mode", "default_cc", "smtp_host", "smtp_port",
     "smtp_security", "smtp_user", "smtp_from", "smtp_from_name", "session_days",
+    "apply_redirect_url", "apply_redirect_label",
 ]
 
 
@@ -552,8 +553,17 @@ def put_settings(ctx):
     if "smtp_security" in body and body["smtp_security"] not in ("none", "starttls", "ssl"):
         raise ApiError(400, "smtp_security 只能是 none / starttls / ssl")
 
+    if "apply_redirect_url" in body:
+        url = str(body["apply_redirect_url"]).strip()
+        if url and not url.startswith(("http://", "https://")):
+            raise ApiError(400, "導向網址必須以 http:// 或 https:// 開頭")
+        if len(url) > 500:
+            raise ApiError(400, "導向網址過長")
+        db.set_setting(ctx.conn, "apply_redirect_url", url)
+
     for key in ["company_name", "base_url", "smtp_host", "smtp_port", "smtp_security",
-                "smtp_user", "smtp_from", "smtp_from_name", "session_days"]:
+                "smtp_user", "smtp_from", "smtp_from_name", "session_days",
+                "apply_redirect_label"]:
         if key in body:
             db.set_setting(ctx.conn, key, str(body[key]).strip())
 
