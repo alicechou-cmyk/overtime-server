@@ -96,95 +96,47 @@ cd ~/Downloads/overtime-server && /usr/bin/python3 app.py
 
 ---
 
-# B. 部署到雲端（Vercel + Neon）
+# B. 雲端（已完成，這裡只記錄怎麼維護）
 
-全程用瀏覽器操作，不需要 CLI（Vercel CLI 需要 Node.js，這台電腦沒有）。
-預計 20～30 分鐘。
+部署已經做完了，這段留給以後需要維護時參考。
 
-## 步驟 1：申請 GitHub 帳號並推上程式碼
+**目前的組成**
 
-程式碼已經是一個 git repo 了（`data/` 已排除，資料庫和密碼不會外流）。
+- 程式放在 Vercel（用「拖放 zip」的方式部署，專案名稱 `overtime-server`）
+- 資料庫是 Vercel Marketplace 開的 Neon Postgres（`neon-cerulean-harbor`），
+  `DATABASE_URL` 由整合自動注入專案環境變數，不用手動填
+- 通知信走 Gmail SMTP（`smtp.gmail.com:587`、STARTTLS），
+  帳號 `alicechou@iwink.tw`，密碼是 Google 應用程式密碼（存在系統的資料庫設定裡）
 
-1. 到 <https://github.com/signup> 註冊（免費）
-2. 登入後點右上 **+ → New repository**
-   - Repository name：`overtime-server`
-   - **選 Private**（重要：這是公司內部系統）
-   - 不要勾任何 initialize 選項
-   - 按 Create repository
-3. 回到終端機，把下面的 `你的帳號` 換成實際的 GitHub 帳號後執行：
+**怎麼更新程式**
 
-```bash
-cd ~/Downloads/overtime-server && git remote add origin https://github.com/你的帳號/overtime-server.git && git push -u origin main
-```
-
-推送時會要求登入。**密碼欄不能用 GitHub 密碼**，要用 Personal Access Token：
-<https://github.com/settings/tokens> → Generate new token (classic) → 勾選 `repo` → 產生後複製貼上。
-
-## 步驟 2：建立 Neon 資料庫（免費，不用信用卡）
-
-1. 到 <https://neon.tech> → Sign up（可以用 GitHub 帳號登入）
-2. Create project：Name 隨意、Region 選 **Singapore** 或 **Tokyo**（離台灣最近）
-3. 建好後在 Dashboard 找 **Connection string**
-4. **一定要選「Pooled connection」**（serverless 一定要用連線池，否則連線數會爆掉）
-5. 複製那串網址，長得像：
-   ```
-   postgresql://neondb_owner:xxxxx@ep-xxx-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
-   ```
-
-## 步驟 3：先在本機驗證這組連線字串（強烈建議）
-
-部署完才發現連不上很難查，先在本機測：
+1. 改完程式後在本機打包：
 
 ```bash
-/usr/bin/python3 -m pip install --user psycopg2-binary
-cd ~/Downloads/overtime-server && /usr/bin/python3 app.py --check-db "把剛才複製的連線字串貼在這裡"
+cd ~/Downloads/overtime-server && rm -f ~/Downloads/overtime-vercel.zip && zip -rq ~/Downloads/overtime-vercel.zip api api.py api_admin.py auth.py db.py dayutil.py mailer.py server.py wsgi.py public requirements.txt vercel.json -x "*__pycache__*" -x "*.pyc"
 ```
 
-它會連線、建立所有資料表、實際寫入一筆測試資料、跑聚合與關聯查詢，最後把測試資料清掉。
-看到「全部通過 ✅」就可以往下走。
+2. 到 <https://vercel.com/new> → 點「choose a **file**」→ 選那個 zip
+3. 專案名稱填 `overtime-server`（若說名稱重複，要先把舊專案刪掉；
+   **資料庫是獨立資源，刪專案不會刪資料**，但刪完要回 Storage 用
+   「Connect Database」把 `neon-cerulean-harbor` 接回新專案，再 Redeploy）
 
-## 步驟 4：部署到 Vercel
+**建議改成 GitHub 自動部署**（一次設定，之後 `git push` 就自動上線）
 
-1. 到 <https://vercel.com/signup> → 用 GitHub 帳號登入
-2. **Add New… → Project** → 找到 `overtime-server` → **Import**
-3. Framework Preset 保持 **Other**（Vercel 會自己認出 Python）
-4. 展開 **Environment Variables**，加入：
+repo 已經建好：`git@github.com:alicechou-cmyk/overtime-server.git`，
+部署金鑰也產生在 `~/.ssh/overtime_deploy`。缺的是 GitHub 要求輸入一次帳號密碼
+（Confirm access）才能把金鑰加進 repo，那一步必須本人操作。
+完成後在 Vercel 專案 Settings → Git 連上 repo 即可。
 
-| Name | Value |
-|---|---|
-| `DATABASE_URL` | 步驟 2 的 Pooled connection string |
-| `ADMIN_INITIAL_PASSWORD` | 你自己想一組管理員初始密碼（至少 8 字、混用兩種以上字元） |
-| `COMPANY_NAME` | 公司名稱（選填） |
+**只改設定不用重新部署**：改環境變數後，到 Deployments → 最新那筆 → `⋯` → Redeploy 就會生效。
 
-5. 按 **Deploy**，等 1～2 分鐘
-6. 打開它給的網址 → 用 `admin` ＋ 你設定的 `ADMIN_INITIAL_PASSWORD` 登入 → 系統會要求改密碼
-7. 進後台「員工與簽核路由」→ 新增員工、設定每個人的簽核主管與副本收件人
+## 方案與限制
 
-網址會像 `https://overtime-server-xxxx.vercel.app`，全球都連得到、有 HTTPS、不依賴你的電腦。
-之後每次 `git push`，Vercel 會自動重新部署。
-
-## 步驟 5：讓通知信真的寄出
-
-雲端 serverless 對外連 SMTP 常被擋，所以建議用 **Resend** 的 HTTP API：
-
-1. <https://resend.com> 註冊（免費方案每月 3000 封）
-2. 拿 API Key
-3. 回到 Vercel 專案 → Settings → Environment Variables → 加 `RESEND_API_KEY`，然後 Redeploy
-4. 系統後台 →「系統設定」→ 通知信寄送方式選 **Resend** → 儲存 → 按「寄一封測試信」
-
-> ⚠️ Resend 沒有驗證自己的網域之前，**只能寄到你註冊 Resend 用的那個信箱**。
-> 要寄給主管和 HR，必須在 Resend 加入公司網域並完成 DNS 驗證（需要 IT 幫忙加 DNS 記錄）。
-> 在那之前，系統可以先用「模擬」模式：信件內容都存在後台寄件匣，流程照跑。
-
-公司有自己的郵件主機、而且 Vercel 連得出去的話，也可以改用 SMTP 模式（後台填主機與帳密）。
-
-## Vercel 方案的注意事項
-
-- **Hobby（免費）方案禁止商業用途**。公司內部工具嚴格來說要用 Pro（約 $20/月）。
-  自己測試沒問題，要正式給同事用請確認方案。
-- **冷啟動**：一段時間沒人用之後，第一個請求會慢 1～3 秒，之後就正常。
-- **背景寄信改成同步**：serverless 沒有背景執行緒，信會在送出登記的那個請求裡直接寄出。
-  如果寄信失敗，紀錄照樣留著，管理員可以在後台寄件匣按「重寄」。
+- **Vercel Hobby 免費方案**：社團／個人非商業用途適用（Hobby 限制的是商業使用）
+- **冷啟動**：一段時間沒人用之後，第一個請求會慢 1～3 秒，之後正常
+- **函式執行上限 60 秒**（Fluid Compute 已啟用）
+- **函式與資料庫都在美東**：從台灣連線實測約 0.3 秒，對社團用量足夠；
+  資料庫就在函式旁邊（實測查詢只多 20ms），不需要調整
 
 ---
 
@@ -263,10 +215,12 @@ systemextensionsctl list | grep -i filter             # 企業安全軟體會擋
 # 資料與備份
 
 - **本機**：全部在 `data/overtime.db`。備份：`cp data/overtime.db ~/Desktop/backup-$(date +%Y%m%d).db`
-- **雲端**：在 Neon 主控台可以看資料、也有自動備份（免費方案保留 7 天的還原點）
+- **雲端**：在 Neon 主控台可以看資料、也有自動備份（免費方案保留 7 天的還原點）。
+  Vercel 專案 → Storage → `neon-cerulean-harbor` → Query 可以直接下 SQL 看資料
 
 `data/` 已經在 `.gitignore` 裡，資料庫、初始密碼、憑證都不會被推上 GitHub。
-雲端的密鑰（`DATABASE_URL`、`RESEND_API_KEY`）放 Vercel 環境變數，不寫在程式碼裡。
+`DATABASE_URL` 由 Neon 整合自動注入 Vercel 環境變數，不寫在程式碼裡。
+Gmail 應用程式密碼存在系統自己的資料庫（設定頁），畫面上只顯示為「已設定」。
 
 ---
 
