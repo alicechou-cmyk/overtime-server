@@ -177,13 +177,55 @@ function renderStepper(record) {
 
   const actions = $('stepActions');
   if (record.status === 'confirmed') {
-    actions.innerHTML = '<button type="button" class="btn btn-primary btn-block" ' +
-      'id="goFormalBtn">前往正式加班申請 →</button>';
+    const url = (App.me && App.me.apply_redirect_url) || '';
+    const label = (App.me && App.me.apply_redirect_label) || '前往 HR 系統填加班申請';
+    actions.innerHTML =
+      '<div class="success-box" style="margin-bottom:.9rem;">' +
+        '<b>✅ 主管已確認</b>　' + App.esc(record.approver_name) + '　' +
+        App.esc(record.decided_at || '') +
+        (record.decision_comment ? '<br>備註：' + App.esc(record.decision_comment) : '') +
+      '</div>' +
+      '<div class="proof-actions">' +
+        '<button type="button" class="btn btn-primary" id="proofPngBtn">' +
+          '⬇︎ 下載簽核證明（PNG）</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="proofPrintBtn">' +
+          '列印 / 存成 PDF</button>' +
+      '</div>' +
+      '<p class="hint" style="margin:.5rem 0 1rem;">這張圖含完整證據鏈與驗證碼，' +
+        '可以直接當附件貼到 HR 系統。之後也能從下方「歷程紀錄」重新下載。</p>' +
+      (url
+        ? '<a class="btn btn-primary btn-block" id="goExternalConfirmed" href="' +
+            App.esc(url) + '" target="_blank" rel="noopener noreferrer">' +
+            App.esc(label) + ' →</a>' +
+          '<div style="margin-top:.5rem;font-size:.82rem;text-align:center;">' +
+            '<span id="countdownText"></span> ' +
+            '<a href="#" id="cancelRedirect" style="color:var(--slate);">留在這裡</a>' +
+          '</div>'
+        : '') +
+      '<button type="button" class="btn btn-ghost btn-sm btn-block" ' +
+        'id="goFormalBtn" style="margin-top:.8rem;">' +
+        '也在本系統送出正式申請（通知 HR 存查）→</button>';
+
+    $('proofPngBtn').addEventListener('click', () =>
+      Proof.download(record, (App.me && App.me.company_name) || ''));
+    $('proofPrintBtn').addEventListener('click', () =>
+      Proof.openPrint(record, (App.me && App.me.company_name) || ''));
     $('goFormalBtn').addEventListener('click', showFormal);
+    if (url) startRedirectCountdown(url, 12);
   } else if (record.status === 'applied') {
     actions.innerHTML = '<div class="success-box"><b>✅ 正式申請已送出</b><br>' +
       '已關聯登記時間戳 ' + App.esc(record.stamped_at) + '，單號 ' +
-      App.esc(record.ticket_no) + '。</div>';
+      App.esc(record.ticket_no) + '。</div>' +
+      '<div class="proof-actions" style="margin-top:.9rem;">' +
+        '<button type="button" class="btn btn-primary btn-sm" id="proofPngBtn2">' +
+          '⬇︎ 下載簽核證明（PNG）</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="proofPrintBtn2">' +
+          '列印 / 存成 PDF</button>' +
+      '</div>';
+    $('proofPngBtn2').addEventListener('click', () =>
+      Proof.download(record, (App.me && App.me.company_name) || ''));
+    $('proofPrintBtn2').addEventListener('click', () =>
+      Proof.openPrint(record, (App.me && App.me.company_name) || ''));
   } else if (record.status === 'notified' || record.status === 'logged') {
     actions.innerHTML = '<div class="alert alert-info" style="margin:0;">' +
       '等主管確認中。主管可以點信裡的連結，或登入系統在「待我簽核」處理。' +
@@ -291,7 +333,7 @@ function startRedirectCountdown(url, seconds) {
   const text = $('countdownText');
   const tick = () => {
     if (!text) return;
-    text.textContent = left + ' 秒後自動前往…';
+    text.textContent = left + ' 秒後自動前往（建議先下載上面的證明圖）…';
     if (left <= 0) {
       clearInterval(redirectTimer);
       window.location.href = url;

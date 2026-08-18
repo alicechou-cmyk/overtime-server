@@ -1,5 +1,6 @@
 """員工端 / 簽核端 / 帳號相關 API。"""
 
+import hashlib
 import json
 import secrets
 
@@ -40,6 +41,24 @@ def user_public(row):
     }
 
 
+def proof_code(conn, row):
+    """簽核證明上的驗證碼。
+
+    用本站專屬的祕密值加上這筆紀錄的關鍵欄位算出來，
+    別人光看證明圖沒辦法自己編一組出來；管理員可以在後台核對。
+    """
+    secret = db.get_setting(conn, "proof_secret", "")
+    if not secret:
+        secret = secrets.token_hex(16)
+        db.set_setting(conn, "proof_secret", secret)
+    raw = "|".join([
+        str(row["ticket_no"]), str(row["stamped_at"]), str(row["decided_at"] or ""),
+        str(row["approver_name"] or ""), secret,
+    ])
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12].upper()
+    return "-".join([digest[0:4], digest[4:8], digest[8:12]])
+
+
 def record_json(conn, row, with_mails=False):
     out = {
         "id": row["id"],
@@ -67,6 +86,7 @@ def record_json(conn, row, with_mails=False):
         "apply_note": row["apply_note"],
         "voided_at": row["voided_at"],
         "void_reason": row["void_reason"],
+        "proof_code": proof_code(conn, row),
     }
     if with_mails:
         out["mails"] = [
