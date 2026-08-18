@@ -94,6 +94,9 @@ def build_notify_mail(conn, record, for_approver):
         "",
         "系統時間戳：{}（不可修改）".format(record["stamped_at"]),
         "登記單號：{}".format(record["ticket_no"]),
+        "",
+        "直屬主管：{}".format(record["approver_name"] or "（未指定）"),
+        "部門主管：{}".format(record["dept_head_name"] or "（未指定）"),
     ]
     if for_approver:
         link = _approve_link(conn, record)
@@ -145,7 +148,8 @@ def build_applied_mail(conn, record):
         "內容：{}".format(record["content"]),
         "",
         "登記時間戳：{}（不可修改）".format(record["stamped_at"]),
-        "主管確認：{} @ {}".format(record["approver_name"], record["decided_at"] or "-"),
+        "直屬主管確認：{} @ {}".format(record["approver_name"], record["decided_at"] or "-"),
+        "部門主管（副本）：{}".format(record["dept_head_name"] or "（未指定）"),
         "申請時間：{}".format(record["applied_at"] or "-"),
         "單號：{}".format(record["ticket_no"]),
     ]
@@ -171,15 +175,32 @@ def queue_mail(conn, record_id, kind, to_email, to_label, subject, body):
         _wake.set()
 
 
-def queue_notify(conn, record, recipients):
-    """登記完成 → 寄給主管 + 副本收件人。"""
-    if recipients["approver"] and recipients["approver"].get("email"):
+def queue_notify(conn, record, cc_list):
+    """登記完成 → 直屬主管（要簽核）＋ 部門主管與副本收件人（只收信）。
+
+    同一個 Email 只寄一封，避免部門主管兼任直屬主管時收到兩封。
+    """
+    seen = set()
+
+    if record["approver_email"]:
         subject, body = build_notify_mail(conn, record, for_approver=True)
-        queue_mail(conn, record["id"], "notify_approver",
-                   recipients["approver"]["email"],
-                   "主管・{}".format(recipients["approver"]["name"]), subject, body)
+        queue_mail(conn, record["id"], "notify_approver", record["approver_email"],
+                   "直屬主管・{}".format(record["approver_name"]), subject, body)
+        seen.add(record["approver_email"].strip().lower())
+
     subject, body = build_notify_mail(conn, record, for_approver=False)
-    for item in recipients["cc"]:
+
+    targets = []
+    if record["dept_head_email"]:
+        targets.append({"label": "部門主管・{}".format(record["dept_head_name"]),
+                        "email": record["dept_head_email"]})
+    targets.extend(cc_list)
+
+    for item in targets:
+        key = (item["email"] or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
         queue_mail(conn, record["id"], "notify_cc", item["email"], item["label"],
                    subject, body)
 
@@ -198,9 +219,17 @@ def queue_applied(conn, record, cc_list, approver_email):
     subject, body = build_applied_mail(conn, record)
     targets = list(cc_list)
     if approver_email:
-        targets.append({"label": "主管・{}".format(record["approver_name"]),
+        targets.append({"label": "直屬主管・{}".format(record["approver_name"]),
                         "email": approver_email})
+    if record["dept_head_email"]:
+        targets.append({"label": "部門主管・{}".format(record["dept_head_name"]),
+                        "email": record["dept_head_email"]})
+    seen = set()
     for item in targets:
+        key = (item["email"] or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
         queue_mail(conn, record["id"], "applied", item["email"], item["label"],
                    subject, body)
 

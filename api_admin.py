@@ -35,6 +35,7 @@ def _user_admin_json(conn, row):
     out.update({
         "active": bool(row["active"]),
         "approver_id": row["approver_id"],
+        "dept_head_id": row["dept_head_id"],
         "use_default_cc": bool(row["use_default_cc"]),
         "created_at": row["created_at"],
         "cc": _cc_rows(conn, row["id"]),
@@ -50,6 +51,14 @@ def _user_admin_json(conn, row):
         out["approver_name"] = ""
         out["approver_email"] = ""
         out["approver_active"] = False
+    if row["dept_head_id"]:
+        dh = conn.execute(
+            "SELECT name,email FROM users WHERE id=?", (row["dept_head_id"],)).fetchone()
+        out["dept_head_name"] = dh["name"] if dh else ""
+        out["dept_head_email"] = dh["email"] if dh else ""
+    else:
+        out["dept_head_name"] = ""
+        out["dept_head_email"] = ""
     out["stats"] = conn.execute(
         "SELECT COUNT(*) AS total, COALESCE(SUM(hours),0) AS hours FROM records "
         "WHERE user_id=? AND status<>'voided'",
@@ -117,6 +126,17 @@ def _validate_user_payload(ctx, body, creating, user_id=None):
         if user_id and _would_loop(ctx.conn, user_id, approver_id):
             raise ApiError(400, "簽核關係會形成循環，請重新指定")
 
+    dept_head_id = body.get("dept_head_id")
+    if dept_head_id in ("", None):
+        dept_head_id = None
+    else:
+        dept_head_id = int(dept_head_id)
+        if user_id and dept_head_id == user_id:
+            raise ApiError(400, "不能把自己設為自己的部門主管")
+        if not ctx.conn.execute(
+                "SELECT 1 FROM users WHERE id=?", (dept_head_id,)).fetchone():
+            raise ApiError(400, "指定的部門主管不存在")
+
     cc = body.get("cc") or []
     clean_cc = []
     for item in cc:
@@ -134,6 +154,7 @@ def _validate_user_payload(ctx, body, creating, user_id=None):
         "dept": (body.get("dept") or "").strip()[:60],
         "role": role,
         "approver_id": approver_id,
+        "dept_head_id": dept_head_id,
         "use_default_cc": 1 if body.get("use_default_cc", True) else 0,
         "active": 1 if body.get("active", True) else 0,
         "cc": clean_cc,
@@ -175,11 +196,11 @@ def post_user(ctx):
         generated = password
     ts = db.now_str()
     cur = ctx.conn.execute(
-        "INSERT INTO users(account,name,email,emp_no,dept,role,approver_id,use_default_cc,"
-        "password_hash,must_change_password,active,created_at,updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO users(account,name,email,emp_no,dept,role,approver_id,dept_head_id,"
+        "use_default_cc,password_hash,must_change_password,active,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (data["account"], data["name"], data["email"], data["emp_no"], data["dept"],
-         data["role"], data["approver_id"], data["use_default_cc"],
+         data["role"], data["approver_id"], data["dept_head_id"], data["use_default_cc"],
          auth.hash_password(password), 1, data["active"], ts, ts),
     )
     user_id = cur.lastrowid
@@ -209,10 +230,10 @@ def patch_user(ctx):
 
     ctx.conn.execute(
         "UPDATE users SET name=?,email=?,emp_no=?,dept=?,role=?,approver_id=?,"
-        "use_default_cc=?,active=?,updated_at=? WHERE id=?",
+        "dept_head_id=?,use_default_cc=?,active=?,updated_at=? WHERE id=?",
         (data["name"], data["email"], data["emp_no"], data["dept"], data["role"],
-         data["approver_id"], data["use_default_cc"], data["active"], db.now_str(),
-         user_id),
+         data["approver_id"], data["dept_head_id"], data["use_default_cc"],
+         data["active"], db.now_str(), user_id),
     )
     _save_cc(ctx.conn, user_id, data["cc"])
     if not data["active"]:
@@ -342,14 +363,15 @@ def get_records_csv(ctx):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["單號", "姓名", "部門", "加班日期", "日別", "開始", "結束", "小時",
-                     "加班內容", "系統時間戳", "狀態", "簽核主管", "簽核時間", "主管備註",
-                     "正式申請時間", "補充說明"])
+                     "加班內容", "系統時間戳", "狀態", "直屬主管", "部門主管", "簽核時間",
+                     "主管備註", "正式申請時間", "補充說明"])
     for r in rows:
         writer.writerow([
             r["ticket_no"], r["user_name"], r["user_dept"], r["work_date"],
             r["day_type_text"], r["start_time"], r["end_time"], r["hours"],
             r["content"], r["stamped_at"], dayutil.status_text(r["status"]),
-            r["approver_name"], r["decided_at"] or "", r["decision_comment"],
+            r["approver_name"], r["dept_head_name"],
+            r["decided_at"] or "", r["decision_comment"],
             r["applied_at"] or "", r["apply_note"],
         ])
     # 加 BOM，Excel 開啟中文才不會亂碼

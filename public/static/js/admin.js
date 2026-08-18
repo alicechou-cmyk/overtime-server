@@ -99,7 +99,8 @@ function renderUsers() {
 
   $('usersTable').innerHTML = '<div class="table-wrap"><table>' +
     '<thead><tr><th>姓名</th><th>帳號</th><th>部門 / 員編</th><th>Email</th>' +
-    '<th>簽核主管（要按確認的人）</th><th>副本收件人</th><th class="nowrap">狀態</th>' +
+    '<th>直屬主管（要按確認）</th><th>部門主管（只收信）</th>' +
+    '<th>副本收件人</th><th class="nowrap">狀態</th>' +
     '<th></th></tr></thead><tbody>' +
     list.map(u => {
       let route;
@@ -132,6 +133,11 @@ function renderUsers() {
         '<td style="font-size:.8rem;">' + (u.email ? App.esc(u.email) :
           '<span style="color:var(--stamp);">⚠ 未填</span>') + '</td>' +
         '<td class="route-cell">' + route + '</td>' +
+        '<td class="route-cell">' + (u.dept_head_id
+          ? App.esc(u.dept_head_name) + (u.dept_head_email
+              ? '<br><span class="cc">' + App.esc(u.dept_head_email) + '</span>'
+              : '<br><span class="none">⚠ 沒有 Email</span>')
+          : '<span class="cc">—</span>') + '</td>' +
         '<td class="route-cell">' + (ccList.length ? ccList.join('<br>') :
           '<span class="cc">—</span>') + '</td>' +
         '<td class="nowrap">' + (u.active ? '<span class="badge badge-good">啟用</span>' :
@@ -206,13 +212,24 @@ function openUserModal(user) {
     '</div>' +
 
     '<h3>這個人的加班登記要發給誰</h3>' +
-    '<div class="field"><label>簽核主管 — 收到通知並要按「確認」的人</label>' +
-      '<select id="umApprover"><option value="">（未指定）</option>' +
-      others.map(u => '<option value="' + u.id + '"' +
-        (!creating && user.approver_id === u.id ? ' selected' : '') + '>' +
-        App.esc(u.name) + (u.dept ? '・' + App.esc(u.dept) : '') +
-        (u.email ? '（' + App.esc(u.email) + '）' : '（未填 Email）') +
-        '</option>').join('') + '</select></div>' +
+    '<p class="hint" style="margin:0 0 .8rem;">這裡設定的是<b>預設值</b>；' +
+      '員工在登記畫面上可以自己改，改過之後會記住新的選擇。</p>' +
+    '<div class="row-2">' +
+      '<div class="field"><label>直屬主管 — 要按「確認」的人</label>' +
+        '<select id="umApprover"><option value="">（未指定）</option>' +
+        others.map(u => '<option value="' + u.id + '"' +
+          (!creating && user.approver_id === u.id ? ' selected' : '') + '>' +
+          App.esc(u.name) + (u.dept ? '・' + App.esc(u.dept) : '') +
+          (u.email ? '（' + App.esc(u.email) + '）' : '（未填 Email）') +
+          '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>部門主管 — 只收通知，不用簽核</label>' +
+        '<select id="umDeptHead"><option value="">（未指定）</option>' +
+        others.map(u => '<option value="' + u.id + '"' +
+          (!creating && user.dept_head_id === u.id ? ' selected' : '') + '>' +
+          App.esc(u.name) + (u.dept ? '・' + App.esc(u.dept) : '') +
+          (u.email ? '（' + App.esc(u.email) + '）' : '（未填 Email）') +
+          '</option>').join('') + '</select></div>' +
+    '</div>' +
 
     '<div class="field"><label>副本收件人 — 只收信、不用簽核</label>' +
       '<div id="umCcRows">' +
@@ -265,6 +282,7 @@ function openUserModal(user) {
       emp_no: root.querySelector('#umEmpNo').value.trim(),
       role: root.querySelector('#umRole').value,
       approver_id: root.querySelector('#umApprover').value || null,
+      dept_head_id: root.querySelector('#umDeptHead').value || null,
       use_default_cc: root.querySelector('#umUseDefault').checked,
       active: root.querySelector('#umActive').checked,
       cc: collectCc(root.querySelector('#umCcRows')),
@@ -397,8 +415,10 @@ async function showRecord(id) {
       ['加班內容', App.esc(r.content)],
       ['系統時間戳', App.esc(r.stamped_at)],
       ['狀態', App.statusBadge(r.status)],
-      ['簽核主管', App.esc(r.approver_name || '—') +
+      ['直屬主管', App.esc(r.approver_name || '—') +
         (r.approver_email ? '（' + App.esc(r.approver_email) + '）' : '')],
+      ['部門主管', App.esc(r.dept_head_name || '—') +
+        (r.dept_head_email ? '（' + App.esc(r.dept_head_email) + '）' : '')],
       ['簽核時間', App.esc(r.decided_at || '—')],
       ['主管備註', App.esc(r.decision_comment || '—')],
       ['正式申請時間', App.esc(r.applied_at || '—')],

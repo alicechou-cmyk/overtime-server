@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS users(
   dept                 TEXT    NOT NULL DEFAULT '',
   role                 TEXT    NOT NULL DEFAULT 'user',
   approver_id          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  dept_head_id         INTEGER,
   use_default_cc       INTEGER NOT NULL DEFAULT 1,
   password_hash        TEXT    NOT NULL,
   must_change_password INTEGER NOT NULL DEFAULT 0,
@@ -95,6 +96,9 @@ CREATE TABLE IF NOT EXISTS records(
   approver_id      INTEGER REFERENCES users(id),
   approver_name    TEXT    NOT NULL DEFAULT '',
   approver_email   TEXT    NOT NULL DEFAULT '',
+  dept_head_id     INTEGER,
+  dept_head_name   TEXT    NOT NULL DEFAULT '',
+  dept_head_email  TEXT    NOT NULL DEFAULT '',
   approve_token    TEXT    NOT NULL DEFAULT '',
   decided_at       TEXT,
   decision_comment TEXT    NOT NULL DEFAULT '',
@@ -296,6 +300,39 @@ def db():
         conn.close()
 
 
+
+# ---------- 欄位遷移 ----------
+# CREATE TABLE IF NOT EXISTS 對已存在的表格沒有作用，
+# 所以新增欄位要靠這裡逐欄檢查後 ALTER TABLE。可重複執行。
+
+MIGRATIONS = [
+    ("users", "dept_head_id", "INTEGER"),
+    ("records", "dept_head_id", "INTEGER"),
+    ("records", "dept_head_name", "TEXT NOT NULL DEFAULT ''"),
+    ("records", "dept_head_email", "TEXT NOT NULL DEFAULT ''"),
+]
+
+
+def existing_columns(conn, table):
+    if use_postgres():
+        rows = conn.execute(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_name=?", (table,))
+    else:
+        rows = conn.execute("PRAGMA table_info({})".format(table))
+    return set(r["name"] for r in rows)
+
+
+def migrate(conn):
+    """補上缺少的欄位，回傳這次實際新增了哪些。"""
+    added = []
+    for table, column, decl in MIGRATIONS:
+        if column not in existing_columns(conn, table):
+            conn.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table, column, decl))
+            added.append("{}.{}".format(table, column))
+    return added
+
+
 # ---------- 設定 ----------
 
 def get_setting(conn, key, default=""):
@@ -349,6 +386,10 @@ def init_db(seed_demo=None):
 
     with db() as conn:
         conn.executescript(SCHEMA_PG if use_postgres() else SCHEMA_SQLITE)
+        added = migrate(conn)
+        if added:
+            info["migrated"] = added
+            print("[db] 已新增欄位：{}".format(", ".join(added)))
 
         for key, value in DEFAULT_SETTINGS.items():
             if conn.execute("SELECT 1 FROM settings WHERE key=?", (key,)).fetchone() is None:

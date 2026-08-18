@@ -59,6 +59,8 @@ def record_json(conn, row, with_mails=False):
         "status_text": dayutil.status_text(row["status"]),
         "approver_name": row["approver_name"],
         "approver_email": row["approver_email"],
+        "dept_head_name": row["dept_head_name"],
+        "dept_head_email": row["dept_head_email"],
         "decided_at": row["decided_at"],
         "decision_comment": row["decision_comment"],
         "applied_at": row["applied_at"],
@@ -215,6 +217,20 @@ def post_change_password(ctx):
 
 # ---------- 員工端 ----------
 
+def selectable_people(ctx):
+    """可以被選為主管的人：啟用中、有 Email、且不是自己。
+
+    不能選自己 —— 否則就能自己核准自己的加班，簽核就失去意義了。
+    """
+    return [
+        {"id": r["id"], "name": r["name"], "dept": r["dept"], "email": r["email"]}
+        for r in ctx.conn.execute(
+            "SELECT id,name,dept,email FROM users WHERE active=1 AND email<>'' "
+            "AND id<>? ORDER BY dept, name", (ctx.user["id"],)
+        )
+    ]
+
+
 def get_bootstrap(ctx):
     """員工登記頁一次抓齊需要的資料。"""
     recipients = mailer.resolve_recipients(ctx.conn, ctx.user)
@@ -232,6 +248,12 @@ def get_bootstrap(ctx):
     return {
         "me": get_me(ctx),
         "routing": recipients,
+        "people": selectable_people(ctx),
+        "defaults": {
+            "user_name": ctx.user["name"],
+            "approver_id": ctx.user["approver_id"],
+            "dept_head_id": ctx.user["dept_head_id"],
+        },
         "holidays": holidays,
         "records": records,
         "server_time": db.now_str(),
@@ -244,6 +266,7 @@ def post_overtime(ctx):
     start = (ctx.body.get("start_time") or "").strip()
     end = (ctx.body.get("end_time") or "").strip()
     content = (ctx.body.get("content") or "").strip()
+    user_name = (ctx.body.get("user_name") or "").strip()[:40] or ctx.user["name"]
 
     try:
         dayutil.parse_date(work_date)
@@ -270,6 +293,13 @@ def post_overtime(ctx):
     if dup:
         raise ApiError(409, "同一天同時段已經登記過了（單號 {}）".format(dup["ticket_no"]))
 
+    approver = _pick_person(ctx, ctx.body.get("approver_id"), "直屬主管",
+                            fallback=ctx.user["approver_id"])
+    dept_head = _pick_person(ctx, ctx.body.get("dept_head_id"), "部門主管",
+                             fallback=ctx.user["dept_head_id"])
+    if not approver:
+        raise ApiError(400, "請選擇你的直屬主管（要由他確認這次加班）")
+
     hours = dayutil.calc_hours(start, end)
     if hours > dayutil.MAX_HOURS:
         raise ApiError(400, "算出來是 {} 小時，看起來時間填錯了（結束時間比開始時間早，"
@@ -277,7 +307,6 @@ def post_overtime(ctx):
                                 hours, dayutil.MAX_HOURS))
     dt = dayutil.day_type(ctx.conn, work_date)
     recipients = mailer.resolve_recipients(ctx.conn, ctx.user)
-    approver = recipients["approver"]
     ticket_no = dayutil.make_ticket_no(ctx.conn, work_date)
     token = secrets.token_urlsafe(24)
     stamped_at = db.now_str()
@@ -285,19 +314,26 @@ def post_overtime(ctx):
     cur = ctx.conn.execute(
         "INSERT INTO records(ticket_no,user_id,user_name,user_dept,work_date,start_time,"
         "end_time,hours,content,day_type,day_type_text,stamped_at,status,approver_id,"
-        "approver_name,approver_email,approve_token,client_ip) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (ticket_no, ctx.user["id"], ctx.user["name"], ctx.user["dept"], work_date, start,
+        "approver_name,approver_email,dept_head_id,dept_head_name,dept_head_email,"
+        "approve_token,client_ip) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (ticket_no, ctx.user["id"], user_name, ctx.user["dept"], work_date, start,
          end, hours, content, dt["code"], dt["text"], stamped_at, "logged",
-         approver["id"] if approver else None,
-         approver["name"] if approver else "",
-         (approver.get("email") or "") if approver else "",
+         approver["id"], approver["name"], approver["email"],
+         dept_head["id"] if dept_head else None,
+         dept_head["name"] if dept_head else "",
+         dept_head["email"] if dept_head else "",
          token, ctx.ip),
     )
     record_id = cur.lastrowid
     record = ctx.conn.execute("SELECT * FROM records WHERE id=?", (record_id,)).fetchone()
 
-    mailer.queue_notify(ctx.conn, record, recipients)
+    mailer.queue_notify(ctx.conn, record, recipients["cc"])
+
+    # 記住這次的選擇，下次登記自動帶入
+    ctx.conn.execute(
+        "UPDATE users SET approver_id=?, dept_head_id=? WHERE id=?",
+        (approver["id"], dept_head["id"] if dept_head else None, ctx.user["id"]))
     has_mail = ctx.conn.execute(
         "SELECT COUNT(*) AS c FROM mails WHERE record_id=?", (record_id,)
     ).fetchone()["c"]
@@ -314,6 +350,27 @@ def post_overtime(ctx):
         "record": record_json(ctx.conn, record, with_mails=True),
         "routing": recipients,
     }
+
+
+def _pick_person(ctx, raw_id, label, fallback=None):
+    """把前端傳來的人員 id 換成 {id,name,email}，順便驗證。"""
+    person_id = raw_id if raw_id not in ("", None) else fallback
+    if person_id in ("", None):
+        return None
+    try:
+        person_id = int(person_id)
+    except (TypeError, ValueError):
+        raise ApiError(400, "{}的選擇不正確".format(label))
+    if person_id == ctx.user["id"]:
+        raise ApiError(400, "{}不能選自己".format(label))
+    row = ctx.conn.execute(
+        "SELECT id,name,email,active FROM users WHERE id=?", (person_id,)).fetchone()
+    if not row or not row["active"]:
+        raise ApiError(400, "{}的帳號不存在或已停用，請重新選擇".format(label))
+    if not row["email"]:
+        raise ApiError(400, "{}（{}）沒有填 Email，收不到通知信，請聯絡管理員".format(
+            label, row["name"]))
+    return {"id": row["id"], "name": row["name"], "email": row["email"]}
 
 
 def _own_record(ctx, record_id):

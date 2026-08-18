@@ -2,6 +2,7 @@
 
 let HOLIDAYS = {};
 let ROUTING = { approver: null, cc: [] };
+let PEOPLE = [];
 let CURRENT = null;      // 目前正在看的那筆登記
 let pollTimer = null;
 
@@ -67,32 +68,67 @@ function refreshHours() {
   }
 }
 
+/* ---------- 主管下拉選單 ---------- */
+function fillPeopleSelects(defaults) {
+  const opts = PEOPLE.map(p =>
+    '<option value="' + p.id + '">' + App.esc(p.name) +
+    (p.dept ? '（' + App.esc(p.dept) + '）' : '') + '</option>').join('');
+
+  const ap = $('approverSelect');
+  const dh = $('deptHeadSelect');
+  ap.innerHTML = '<option value="">— 請選擇 —</option>' + opts;
+  dh.innerHTML = '<option value="">— 不指定 —</option>' + opts;
+
+  if (defaults.approver_id) ap.value = String(defaults.approver_id);
+  if (defaults.dept_head_id) dh.value = String(defaults.dept_head_id);
+
+  showPickedEmail('approverSelect', 'approverEmail');
+  showPickedEmail('deptHeadSelect', 'deptHeadEmail');
+
+  if (!PEOPLE.length) {
+    $('approverEmail').innerHTML =
+      '<span style="color:#f19aa5;">系統裡還沒有其他成員可以選，請管理員先建立主管的帳號</span>';
+  }
+}
+
+/* 選完之後把 email 顯示出來（自動帶入） */
+function showPickedEmail(selectId, targetId) {
+  const id = $(selectId).value;
+  const box = $(targetId);
+  if (!id) { box.textContent = ''; box.className = 'picked-email'; return; }
+  const person = PEOPLE.find(p => String(p.id) === String(id));
+  box.textContent = person ? person.email : '';
+  box.className = 'picked-email ok';
+}
+
 /* ---------- 通知對象 ---------- */
 function renderRouting() {
   const box = $('routingBox');
   const rows = [];
-  if (ROUTING.approver && ROUTING.approver.email) {
-    rows.push('<div class="rt-item"><span class="who">簽核主管　' +
-      App.esc(ROUTING.approver.name) + '</span><span class="addr">' +
-      App.esc(ROUTING.approver.email) + '</span></div>');
-  }
-  ROUTING.cc.forEach(item => {
-    rows.push('<div class="rt-item"><span class="who">' + App.esc(item.label) +
-      '</span><span class="addr">' + App.esc(item.email) + '</span></div>');
-  });
+  const seen = new Set();
 
-  let warn = '';
-  if (!ROUTING.approver) {
-    warn = '<div class="alert alert-warn" style="margin:.6rem 0 0;">' +
-      '尚未指定你的簽核主管，登記後只會通知副本收件人。請聯絡管理員在後台設定。</div>';
-  } else if (!ROUTING.approver.email) {
-    warn = '<div class="alert alert-warn" style="margin:.6rem 0 0;">' +
-      '你的簽核主管（' + App.esc(ROUTING.approver.name) +
-      '）沒有填 Email，收不到通知信。請聯絡管理員。</div>';
-  }
+  const push = (who, email, note) => {
+    const key = (email || '').toLowerCase();
+    if (!email || seen.has(key)) return;
+    seen.add(key);
+    rows.push('<div class="rt-item"><span class="who">' + App.esc(who) +
+      (note ? ' <span style="font-weight:400;color:var(--slate-dim);">' + note + '</span>' : '') +
+      '</span><span class="addr">' + App.esc(email) + '</span></div>');
+  };
+
+  const ap = PEOPLE.find(p => String(p.id) === $('approverSelect').value);
+  const dh = PEOPLE.find(p => String(p.id) === $('deptHeadSelect').value);
+  if (ap) push('直屬主管　' + ap.name, ap.email, '要按確認');
+  if (dh) push('部門主管　' + dh.name, dh.email, '只收信');
+  ROUTING.cc.forEach(item => push(item.label, item.email, '只收信'));
+
+  const warn = ap ? '' :
+    '<div class="alert alert-warn" style="margin:.6rem 0 0;">' +
+    '請先選擇你的直屬主管，他需要確認這次加班你才能送出正式申請。</div>';
 
   box.innerHTML = '<div class="rt-title">這次登記會通知</div>' +
-    (rows.length ? rows.join('') : '<div class="rt-item"><span class="addr">尚未設定任何收件人</span></div>') +
+    (rows.length ? rows.join('')
+                 : '<div class="rt-item"><span class="addr">尚未有收件人</span></div>') +
     warn;
 }
 
@@ -239,7 +275,8 @@ function showFormal() {
     ['時段', App.esc(r.start_time) + ' - ' + App.esc(r.end_time) + '（' + r.hours + ' 小時）'],
     ['內容', App.esc(r.content)],
     ['登記時間戳', App.esc(r.stamped_at)],
-    ['主管確認', App.esc(r.approver_name) + '　' + App.esc(r.decided_at || '')],
+    ['直屬主管', App.esc(r.approver_name) + '　' + App.esc(r.decided_at || '')],
+    ['部門主管', App.esc(r.dept_head_name || '（未指定）')],
     ['單號', App.esc(r.ticket_no)],
   ].map(([k, v]) => '<div class="recap-row"><span class="k">' + k +
     '</span><span class="v">' + v + '</span></div>').join('');
@@ -327,6 +364,9 @@ $('logForm').addEventListener('submit', async (e) => {
         start_time: $('startInput').value,
         end_time: $('endInput').value,
         content: $('contentInput').value.trim(),
+        user_name: $('nameInput').value.trim(),
+        approver_id: $('approverSelect').value || null,
+        dept_head_id: $('deptHeadSelect').value || null,
       },
     });
     $('contentInput').value = '';
@@ -379,6 +419,13 @@ $('voidBtn').addEventListener('click', async () => {
 });
 
 $('dateInput').addEventListener('change', refreshDateBadge);
+['approverSelect', 'deptHeadSelect'].forEach(id => {
+  $(id).addEventListener('change', () => {
+    showPickedEmail('approverSelect', 'approverEmail');
+    showPickedEmail('deptHeadSelect', 'deptHeadEmail');
+    renderRouting();
+  });
+});
 $('startInput').addEventListener('change', refreshHours);
 $('endInput').addEventListener('change', refreshHours);
 $('startInput').addEventListener('input', refreshHours);
@@ -396,8 +443,9 @@ $('endInput').addEventListener('input', refreshHours);
 
     HOLIDAYS = data.holidays || {};
     ROUTING = data.routing || { approver: null, cc: [] };
-    $('nameInput').value = data.me.user.name +
-      (data.me.user.dept ? '（' + data.me.user.dept + '）' : '');
+    PEOPLE = data.people || [];
+    $('nameInput').value = (data.defaults && data.defaults.user_name) || data.me.user.name;
+    fillPeopleSelects(data.defaults || {});
     renderRouting();
     tickClock();
     showForm();
