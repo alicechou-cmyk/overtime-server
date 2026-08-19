@@ -82,6 +82,9 @@ PAGES = {
     "/password": "password.html",
 }
 
+# 每次部署時更新，用來確認線上跑的是哪一版
+APP_VERSION = "2026-08-19-git"
+
 ACCESS_LOG = os.path.join(db.DATA_DIR, "server.log")
 _log_lock = threading.Lock()
 _init_lock = threading.Lock()
@@ -299,7 +302,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/health":
                 return self._json(200, {"ok": True, "time": db.now_str(),
-                                        "backend": db.backend_name()})
+                                        "backend": db.backend_name(),
+                                        "version": APP_VERSION})
             if path == "/favicon.ico":
                 return self._send(204)
             if path.startswith("/static/"):
