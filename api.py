@@ -3,6 +3,7 @@
 import hashlib
 import json
 import secrets
+from datetime import timedelta
 
 import auth
 import db
@@ -59,6 +60,20 @@ def proof_code(conn, row):
     return "-".join([digest[0:4], digest[4:8], digest[8:12]])
 
 
+def _load_segments(row):
+    """計時器送出的登記會帶著每一段的明細；手動補登的沒有。"""
+    try:
+        raw = row["segments"]
+    except (KeyError, IndexError):
+        return []
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return []
+
+
 def record_json(conn, row, with_mails=False):
     out = {
         "id": row["id"],
@@ -87,6 +102,7 @@ def record_json(conn, row, with_mails=False):
         "voided_at": row["voided_at"],
         "void_reason": row["void_reason"],
         "proof_code": proof_code(conn, row),
+        "segments": _load_segments(row),
     }
     if with_mails:
         out["mails"] = [
@@ -279,17 +295,24 @@ def get_bootstrap(ctx):
         },
         "holidays": holidays,
         "records": records,
+        "timer": timer_state(ctx),
         "server_time": db.now_str(),
     }
 
 
 def post_overtime(ctx):
-    """登記加班：時間戳由伺服器蓋，寫入後不可修改。"""
+    """登記加班：時間戳由伺服器蓋，寫入後不可修改。
+
+    兩種來源：
+      source=timer  → 把某一天「開始／暫停／繼續」累計的每一段加總成一筆（主要用法）
+      其他          → 手動填開始、結束時間（忘了按開始時的補登）
+    """
+    if (ctx.body.get("source") or "") == "timer":
+        return _post_overtime_from_timer(ctx)
+
     work_date = (ctx.body.get("work_date") or "").strip()
     start = (ctx.body.get("start_time") or "").strip()
     end = (ctx.body.get("end_time") or "").strip()
-    content = (ctx.body.get("content") or "").strip()
-    user_name = (ctx.body.get("user_name") or "").strip()[:40] or ctx.user["name"]
 
     try:
         dayutil.parse_date(work_date)
@@ -299,13 +322,8 @@ def post_overtime(ctx):
         raise ApiError(400, "時間格式不正確")
     if start == end:
         raise ApiError(400, "開始與結束時間不能相同")
-    if len(content) < 4:
-        raise ApiError(400, "請簡述加班內容（至少 4 個字）")
-    if len(content) > 2000:
-        raise ApiError(400, "加班內容過長")
-
-    today = dayutil.today_str()
-    if work_date > today:
+    content = _check_content(ctx)
+    if work_date > dayutil.today_str():
         raise ApiError(400, "不能登記未來日期的加班")
 
     dup = ctx.conn.execute(
@@ -316,6 +334,68 @@ def post_overtime(ctx):
     if dup:
         raise ApiError(409, "同一天同時段已經登記過了（單號 {}）".format(dup["ticket_no"]))
 
+    hours = dayutil.calc_hours(start, end)
+    if hours > dayutil.MAX_HOURS:
+        raise ApiError(400, "算出來是 {} 小時，看起來時間填錯了（結束時間比開始時間早，"
+                            "系統會當成跨夜）。單筆上限 {} 小時，跨夜請分兩筆登記。".format(
+                                hours, dayutil.MAX_HOURS))
+    return _create_record(ctx, work_date, start, end, hours, content)
+
+
+def _post_overtime_from_timer(ctx):
+    """一天做完後，把當天累計的每一段確認送出成一筆登記。"""
+    work_date = (ctx.body.get("work_date") or "").strip() or dayutil.today_str()
+    try:
+        dayutil.parse_date(work_date)
+    except Exception:
+        raise ApiError(400, "日期格式不正確")
+    content = _check_content(ctx)
+
+    # 還在計時就幫他按暫停：送出的那一刻就是今天的收工時間
+    _normalize_running(ctx)
+    now = db.now_str()
+    ctx.conn.execute(
+        "UPDATE work_segments SET ended_at=? WHERE user_id=? AND work_date=? "
+        "AND ended_at IS NULL AND record_id IS NULL", (now, ctx.user["id"], work_date))
+
+    segs = _open_segments(ctx, work_date)
+    if not segs:
+        raise ApiError(400, "{} 沒有尚未送出的計時紀錄".format(work_date))
+    total = sum(_seg_seconds(s, now) for s in segs)
+    if total < 60:
+        raise ApiError(400, "累計不到 1 分鐘，不需要送出；可以把這段刪掉")
+
+    hours = round(total / 3600.0, 2)
+    start = segs[0]["started_at"][11:16]
+    last_end = max(s["ended_at"] for s in segs)
+    end = "24:00" if last_end[:10] > work_date else last_end[11:16]
+    detail = [{
+        "start": s["started_at"][11:19],
+        "end": "24:00:00" if s["ended_at"][:10] > work_date else s["ended_at"][11:19],
+        "seconds": _seg_seconds(s, now),
+    } for s in segs]
+
+    result = _create_record(ctx, work_date, start, end, hours, content,
+                            segments=json.dumps(detail, ensure_ascii=False))
+    ctx.conn.execute(
+        "UPDATE work_segments SET record_id=? WHERE id IN ({})".format(
+            ",".join("?" * len(segs))),
+        [result["record"]["id"]] + [s["id"] for s in segs])
+    result["timer"] = timer_state(ctx)
+    return result
+
+
+def _check_content(ctx):
+    content = (ctx.body.get("content") or "").strip()
+    if len(content) < 4:
+        raise ApiError(400, "請簡述加班內容（至少 4 個字）")
+    if len(content) > 2000:
+        raise ApiError(400, "加班內容過長")
+    return content
+
+
+def _create_record(ctx, work_date, start, end, hours, content, segments=""):
+    user_name = (ctx.body.get("user_name") or "").strip()[:40] or ctx.user["name"]
     approver = _pick_person(ctx, ctx.body.get("approver_id"), "直屬主管",
                             fallback=ctx.user["approver_id"])
     dept_head = _pick_person(ctx, ctx.body.get("dept_head_id"), "部門主管",
@@ -323,11 +403,6 @@ def post_overtime(ctx):
     if not approver:
         raise ApiError(400, "請選擇你的直屬主管（要由他確認這次加班）")
 
-    hours = dayutil.calc_hours(start, end)
-    if hours > dayutil.MAX_HOURS:
-        raise ApiError(400, "算出來是 {} 小時，看起來時間填錯了（結束時間比開始時間早，"
-                            "系統會當成跨夜）。單筆上限 {} 小時，跨夜請分兩筆登記。".format(
-                                hours, dayutil.MAX_HOURS))
     dt = dayutil.day_type(ctx.conn, work_date)
     recipients = mailer.resolve_recipients(ctx.conn, ctx.user)
     ticket_no = dayutil.make_ticket_no(ctx.conn, work_date)
@@ -338,15 +413,15 @@ def post_overtime(ctx):
         "INSERT INTO records(ticket_no,user_id,user_name,user_dept,work_date,start_time,"
         "end_time,hours,content,day_type,day_type_text,stamped_at,status,approver_id,"
         "approver_name,approver_email,dept_head_id,dept_head_name,dept_head_email,"
-        "approve_token,client_ip) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "approve_token,client_ip,segments) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (ticket_no, ctx.user["id"], user_name, ctx.user["dept"], work_date, start,
          end, hours, content, dt["code"], dt["text"], stamped_at, "logged",
          approver["id"], approver["name"], approver["email"],
          dept_head["id"] if dept_head else None,
          dept_head["name"] if dept_head else "",
          dept_head["email"] if dept_head else "",
-         token, ctx.ip),
+         token, ctx.ip, segments),
     )
     record_id = cur.lastrowid
     record = ctx.conn.execute("SELECT * FROM records WHERE id=?", (record_id,)).fetchone()
@@ -364,7 +439,8 @@ def post_overtime(ctx):
         ctx.conn.execute("UPDATE records SET status='notified' WHERE id=?", (record_id,))
 
     db.log_audit(ctx.conn, ctx.user["account"], "overtime_logged", ticket_no,
-                 "{} {}-{}（{}h）".format(work_date, start, end, hours), ctx.ip)
+                 "{} {}-{}（{}h{}）".format(work_date, start, end, hours,
+                                          "，計時器" if segments else ""), ctx.ip)
 
     record = ctx.conn.execute("SELECT * FROM records WHERE id=?", (record_id,)).fetchone()
     mailer.wake(ctx.conn)
@@ -373,6 +449,124 @@ def post_overtime(ctx):
         "record": record_json(ctx.conn, record, with_mails=True),
         "routing": recipients,
     }
+
+
+# ---------- 計時器：開始 → 暫停 → 繼續，一天做完再一次送出 ----------
+
+def _seg_seconds(seg, now):
+    end = seg["ended_at"] or now
+    return max(0, int((db.parse_ts(end) - db.parse_ts(seg["started_at"])).total_seconds()))
+
+
+def _open_segments(ctx, work_date=None):
+    """還沒送出的段落（依開始時間排序）。"""
+    sql = "SELECT * FROM work_segments WHERE user_id=? AND record_id IS NULL"
+    params = [ctx.user["id"]]
+    if work_date:
+        sql += " AND work_date=?"
+        params.append(work_date)
+    return list(ctx.conn.execute(sql + " ORDER BY started_at, id", params))
+
+
+def _running_segment(ctx):
+    return ctx.conn.execute(
+        "SELECT * FROM work_segments WHERE user_id=? AND ended_at IS NULL "
+        "AND record_id IS NULL ORDER BY id DESC LIMIT 1", (ctx.user["id"],)
+    ).fetchone()
+
+
+def _normalize_running(ctx):
+    """忘了按暫停就過了午夜：在 00:00 把那一段切開，前一天的工時歸前一天。"""
+    seg = _running_segment(ctx)
+    today = dayutil.today_str()
+    while seg is not None and seg["work_date"] < today:
+        next_day = (dayutil.parse_date(seg["work_date"]) + timedelta(days=1)).isoformat()
+        midnight = next_day + " 00:00:00"
+        ctx.conn.execute("UPDATE work_segments SET ended_at=? WHERE id=?",
+                         (midnight, seg["id"]))
+        cur = ctx.conn.execute(
+            "INSERT INTO work_segments(user_id,work_date,started_at,client_ip) "
+            "VALUES(?,?,?,?)", (ctx.user["id"], next_day, midnight, seg["client_ip"]))
+        seg = ctx.conn.execute("SELECT * FROM work_segments WHERE id=?",
+                               (cur.lastrowid,)).fetchone()
+    return seg
+
+
+def timer_state(ctx):
+    running = _normalize_running(ctx)
+    now = db.now_str()
+    days = {}
+    for s in _open_segments(ctx):
+        day = days.setdefault(s["work_date"], {
+            "work_date": s["work_date"],
+            "day_type_text": dayutil.day_type(ctx.conn, s["work_date"])["text"],
+            "segments": [], "closed_seconds": 0, "running": False,
+        })
+        seconds = _seg_seconds(s, now)
+        day["segments"].append({
+            "id": s["id"],
+            "started_at": s["started_at"],
+            "ended_at": s["ended_at"],
+            "seconds": seconds,
+        })
+        if s["ended_at"]:
+            day["closed_seconds"] += seconds
+        else:
+            day["running"] = True
+    return {
+        "today": dayutil.today_str(),
+        "server_time": now,
+        "running": running is not None,
+        "running_since": running["started_at"] if running else None,
+        "days": [days[k] for k in sorted(days)],
+    }
+
+
+def get_timer(ctx):
+    return {"timer": timer_state(ctx)}
+
+
+def post_timer_start(ctx):
+    """開始／繼續：開一段新的計時。"""
+    if _normalize_running(ctx) is not None:
+        raise ApiError(409, "已經在計時中了")
+    today = dayutil.today_str()
+    resumed = bool(_open_segments(ctx, today))
+    now = db.now_str()
+    ctx.conn.execute(
+        "INSERT INTO work_segments(user_id,work_date,started_at,client_ip) VALUES(?,?,?,?)",
+        (ctx.user["id"], today, now, ctx.ip))
+    db.log_audit(ctx.conn, ctx.user["account"], "timer_resume" if resumed else "timer_start",
+                 today, now[11:], ctx.ip)
+    return {"ok": True, "timer": timer_state(ctx)}
+
+
+def post_timer_pause(ctx):
+    seg = _normalize_running(ctx)
+    if seg is None:
+        raise ApiError(409, "目前沒有在計時")
+    now = db.now_str()
+    ctx.conn.execute("UPDATE work_segments SET ended_at=? WHERE id=?", (now, seg["id"]))
+    db.log_audit(ctx.conn, ctx.user["account"], "timer_pause", seg["work_date"],
+                 "{} - {}".format(seg["started_at"][11:], now[11:]), ctx.ip)
+    return {"ok": True, "timer": timer_state(ctx)}
+
+
+def delete_timer_segment(ctx):
+    """刪掉一段還沒送出的計時（例如忘了按暫停、按錯）。操作紀錄會留下來。"""
+    seg = ctx.conn.execute(
+        "SELECT * FROM work_segments WHERE id=? AND user_id=?",
+        (ctx.path_params["id"], ctx.user["id"])).fetchone()
+    if not seg:
+        raise ApiError(404, "找不到這段計時")
+    if seg["record_id"] is not None:
+        raise ApiError(409, "這段已經送出，不能刪除")
+    if seg["ended_at"] is None:
+        raise ApiError(409, "正在計時中，請先暫停再刪除")
+    ctx.conn.execute("DELETE FROM work_segments WHERE id=?", (seg["id"],))
+    db.log_audit(ctx.conn, ctx.user["account"], "timer_segment_deleted", seg["work_date"],
+                 "{} - {}".format(seg["started_at"][11:], seg["ended_at"][11:]), ctx.ip)
+    return {"ok": True, "timer": timer_state(ctx)}
 
 
 def _pick_person(ctx, raw_id, label, fallback=None):
@@ -450,6 +644,9 @@ def post_void(ctx):
         "UPDATE records SET status='voided', voided_at=?, void_reason=? WHERE id=?",
         (db.now_str(), reason, row["id"]),
     )
+    # 計時器送出的登記作廢後，那幾段計時回到「未送出」，修正後可以重新送出
+    ctx.conn.execute("UPDATE work_segments SET record_id=NULL WHERE record_id=?",
+                     (row["id"],))
     db.log_audit(ctx.conn, ctx.user["account"], "overtime_voided", row["ticket_no"],
                  reason, ctx.ip)
     return {"ok": True}

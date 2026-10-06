@@ -79,6 +79,26 @@ def _approve_link(conn, record):
     return "{}/approve?t={}".format(base, record["approve_token"])
 
 
+def _fmt_seconds(seconds):
+    h, m = divmod(int(seconds) // 60, 60)
+    return "{} 小時 {} 分".format(h, m) if h else "{} 分".format(m)
+
+
+def segment_lines(record):
+    """計時器送出的登記：列出每一段開始／暫停的時間。"""
+    try:
+        segs = json.loads(record["segments"] or "[]")
+    except (KeyError, IndexError, ValueError):
+        return []
+    if not segs:
+        return []
+    lines = ["計時明細（開始 → 暫停，伺服器時間）："]
+    for i, seg in enumerate(segs, 1):
+        lines.append("  第 {} 段　{} → {}（{}）".format(
+            i, seg["start"], seg["end"], _fmt_seconds(seg["seconds"])))
+    return lines
+
+
 def build_notify_mail(conn, record, for_approver):
     company = db.get_setting(conn, "company_name", "")
     subject = "[加班通知] {}・{}（{}）".format(
@@ -90,6 +110,7 @@ def build_notify_mail(conn, record, for_approver):
         "日期：{}（{}）".format(record["work_date"], record["day_type_text"]),
         "時段：{} - {}（共 {} 小時）".format(
             record["start_time"], record["end_time"], record["hours"]),
+    ] + segment_lines(record) + [
         "內容：{}".format(record["content"]),
         "",
         "系統時間戳：{}（不可修改）".format(record["stamped_at"]),
@@ -145,6 +166,7 @@ def build_applied_mail(conn, record):
         "日期：{}（{}）".format(record["work_date"], record["day_type_text"]),
         "時段：{} - {}（共 {} 小時）".format(
             record["start_time"], record["end_time"], record["hours"]),
+    ] + segment_lines(record) + [
         "內容：{}".format(record["content"]),
         "",
         "登記時間戳：{}（不可修改）".format(record["stamped_at"]),

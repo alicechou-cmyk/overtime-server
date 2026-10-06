@@ -81,6 +81,34 @@
     font-family:'JetBrains Mono',monospace;}
   .picked-email.ok{color:var(--good);}
   .proof-actions{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;}
+  /* 計時器 */
+  .timer-box{background:var(--ink);border:1px solid var(--line);border-radius:14px;
+    padding:1.4rem 1rem;text-align:center;margin-bottom:1rem;}
+  .timer-status{font-size:.82rem;color:var(--slate);display:flex;align-items:center;
+    justify-content:center;gap:.45rem;}
+  .timer-status .dot{width:9px;height:9px;border-radius:50%;background:var(--slate-dim);}
+  .timer-box.running .timer-status{color:var(--good);}
+  .timer-box.running .timer-status .dot{background:var(--good);animation:blink 1.2s infinite;}
+  .timer-box.paused .timer-status{color:var(--amber);}
+  .timer-box.paused .timer-status .dot{background:var(--amber);}
+  @keyframes blink{50%{opacity:.25;}}
+  .timer-total{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;
+    font-weight:700;font-size:clamp(2.2rem,9vw,3.2rem);color:var(--paper);margin:.35rem 0 .2rem;}
+  .timer-sub{font-size:.8rem;color:var(--slate-dim);min-height:1.1rem;}
+  .timer-actions{display:flex;gap:.6rem;margin-bottom:1rem;}
+  .timer-actions .btn{flex:1;font-size:1.05rem;padding:.85rem 1rem;}
+  .seg{display:flex;align-items:center;gap:.7rem;padding:.5rem .2rem;
+    border-bottom:1px dashed var(--line);font-size:.86rem;}
+  .seg:last-child{border-bottom:none;}
+  .seg .n{color:var(--slate-dim);flex:none;width:3.2em;}
+  .seg .t{font-family:'JetBrains Mono',monospace;flex:1;}
+  .seg .d{font-family:'JetBrains Mono',monospace;color:var(--amber);flex:none;}
+  .seg .x{flex:none;background:none;border:none;color:var(--slate-dim);cursor:pointer;
+    font-size:.78rem;padding:.2rem .4rem;}
+  .seg .x:hover{color:#f19aa5;}
+  .seg-list{margin-bottom:1rem;}
+  .manual-link{text-align:center;margin-top:1rem;font-size:.82rem;}
+  .manual-link a{color:var(--slate);}
   .demo-tag{display:inline-block;font-size:.68rem;color:var(--amber);
     border:1px dashed rgba(242,169,60,.5);padding:.1rem .45rem;border-radius:6px;
     margin-left:.4rem;vertical-align:middle;}
@@ -98,13 +126,33 @@
       <span id="clockDate">—</span>
       <span class="badge" id="todayBadge">—</span>
     </div>
-    <p class="tagline">加完班馬上登記，系統立刻蓋上時間戳、同步通知主管與 HR。有紀錄，才有加班費。</p>
+    <p class="tagline">開始工作按「開始」，休息按「暫停」，回來按「繼續」。一天做完再確認送出當日總工時，系統蓋上時間戳、同步通知主管與 HR。</p>
   </header>
+
+  <!-- 計時器：開始 → 暫停 → 繼續 -->
+  <section class="card" id="timerSection" hidden>
+    <h2>今日工時</h2>
+    <p class="hint">每一次開始、暫停都由伺服器記下時間，當天的工時會一直累計；一天做完再一次確認送出。</p>
+    <div id="timerPending"></div>
+    <div class="timer-box" id="timerBox">
+      <div class="timer-status"><span class="dot"></span><span id="timerStatus">尚未開始</span></div>
+      <div class="timer-total" id="timerTotal">00:00:00</div>
+      <div class="timer-sub" id="timerSub"></div>
+    </div>
+    <div class="timer-actions">
+      <button type="button" class="btn btn-primary" id="timerMainBtn">▶ 開始</button>
+    </div>
+    <div class="seg-list" id="segList"></div>
+    <button type="button" class="btn btn-good btn-block" id="finishDayBtn" hidden>
+      ✓ 今天做完了，確認並送出總工時</button>
+    <div class="manual-link"><a href="#" id="manualLink">忘了按開始？改用手動補登時段</a></div>
+  </section>
 
   <!-- 登記表單 -->
   <section class="card" id="formSection" hidden>
-    <h2>登記這次加班</h2>
-    <p class="hint">送出後時間戳由伺服器蓋上，無法事後補改。</p>
+    <h2 id="formTitle">登記這次加班</h2>
+    <p class="hint" id="formHint">送出後時間戳由伺服器蓋上，無法事後補改。</p>
+    <div class="recap" id="timerRecap" hidden></div>
 
     <div class="routing" id="routingBox"></div>
     <div id="formMsg"></div>
@@ -131,6 +179,7 @@
           <div class="picked-email" id="deptHeadEmail"></div>
         </div>
       </div>
+      <div id="manualFields">
       <div class="field">
         <label for="dateInput">加班日期</label>
         <div class="date-with-badge">
@@ -149,12 +198,14 @@
         </div>
       </div>
       <div id="hoursHint" style="margin:-.4rem 0 1rem;font-size:.85rem;"></div>
+      </div>
       <div class="field">
         <label for="contentInput">加班內容</label>
         <textarea id="contentInput" required
           placeholder="例如：處理假日客服系統異常，排除後確認服務恢復正常。"></textarea>
       </div>
       <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancelFormBtn">← 返回計時</button>
         <button type="submit" class="btn btn-primary" id="stampBtn">蓋章送出</button>
       </div>
     </form>
@@ -175,7 +226,7 @@
     <div id="stepActions" style="margin-top:.6rem;"></div>
 
     <div class="form-actions" style="justify-content:space-between;margin-top:1rem;">
-      <button type="button" class="btn btn-ghost btn-sm" id="newOneBtn">登記另一筆</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="newOneBtn">← 回到計時</button>
       <button type="button" class="btn btn-danger btn-sm" id="voidBtn">作廢這筆</button>
     </div>
   </section>

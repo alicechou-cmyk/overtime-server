@@ -35,6 +35,10 @@ ROUTES = [
 
     ("GET", r"^/api/bootstrap$", api.get_bootstrap, "user"),
     ("POST", r"^/api/overtime$", api.post_overtime, "user"),
+    ("GET", r"^/api/timer$", api.get_timer, "user"),
+    ("POST", r"^/api/timer/start$", api.post_timer_start, "user"),
+    ("POST", r"^/api/timer/pause$", api.post_timer_pause, "user"),
+    ("DELETE", r"^/api/timer/segments/(?P<id>\d+)$", api.delete_timer_segment, "user"),
     ("GET", r"^/api/records$", api.get_my_records, "user"),
     ("GET", r"^/api/records/(?P<id>\d+)$", api.get_record, "user"),
     ("POST", r"^/api/records/(?P<id>\d+)/apply$", api.post_apply, "user"),
@@ -83,7 +87,7 @@ PAGES = {
 }
 
 # 每次部署時更新，用來確認線上跑的是哪一版
-APP_VERSION = "2026-08-19-git"
+APP_VERSION = "2026-10-06-timer"
 
 ACCESS_LOG = os.path.join(db.DATA_DIR, "server.log")
 _log_lock = threading.Lock()

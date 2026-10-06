@@ -5,6 +5,9 @@ let ROUTING = { approver: null, cc: [] };
 let PEOPLE = [];
 let CURRENT = null;      // 目前正在看的那筆登記
 let pollTimer = null;
+let TIMER = null;        // 計時器狀態（伺服器回傳）
+let TIMER_OFFSET = 0;    // 伺服器時間 - 本機時間（毫秒），讓畫面上的秒數跟伺服器一致
+let CONFIRM_DATE = null; // 正在確認送出哪一天的累計工時；null = 手動補登
 
 const $ = (id) => document.getElementById(id);
 
@@ -276,22 +279,214 @@ function renderMails(record) {
   }).join('');
 }
 
+/* ---------- 計時器：開始 → 暫停 → 繼續 ---------- */
+/* 伺服器的時間字串（台灣時間、不帶時區）一律用同一種方式解析，
+   只拿來互相相減，所以使用者的電腦在哪個時區都不影響。 */
+function parseTs(s) {
+  const [d, t] = s.split(' ');
+  const [y, mo, da] = d.split('-').map(Number);
+  const [h, mi, se] = t.split(':').map(Number);
+  return Date.UTC(y, mo - 1, da, h, mi, se || 0);
+}
+
+function serverNow() { return Date.now() + TIMER_OFFSET; }
+
+function setTimer(timer) {
+  TIMER = timer;
+  TIMER_OFFSET = parseTs(timer.server_time) - Date.now();
+  renderTimer();
+}
+
+function fmtDuration(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  return App.pad(Math.floor(sec / 3600)) + ':' + App.pad(Math.floor(sec / 60) % 60) + ':' +
+    App.pad(sec % 60);
+}
+
+function fmtHuman(sec) {
+  const m = Math.floor(sec / 60);
+  const h = Math.floor(m / 60);
+  return h ? h + ' 小時 ' + (m % 60) + ' 分' : m + ' 分';
+}
+
+/* 某一天目前累計的秒數（正在計時的那段算到現在） */
+function daySeconds(day) {
+  let total = day.closed_seconds;
+  day.segments.forEach(seg => {
+    if (!seg.ended_at) total += (serverNow() - parseTs(seg.started_at)) / 1000;
+  });
+  return total;
+}
+
+function segSeconds(seg) {
+  return seg.ended_at ? seg.seconds : (serverNow() - parseTs(seg.started_at)) / 1000;
+}
+
+function timerDay(date) {
+  return TIMER ? TIMER.days.find(d => d.work_date === date) : null;
+}
+
+function renderTimer() {
+  if (!TIMER) return;
+  const today = timerDay(TIMER.today);
+  const running = TIMER.running;
+  const hasToday = !!(today && today.segments.length);
+
+  $('timerBox').className = 'timer-box' + (running ? ' running' : (hasToday ? ' paused' : ''));
+  $('timerStatus').textContent = running ? '計時中' : (hasToday ? '已暫停' : '尚未開始');
+
+  const btn = $('timerMainBtn');
+  if (running) {
+    btn.textContent = '⏸ 暫停';
+    btn.className = 'btn btn-ghost';
+  } else {
+    btn.textContent = hasToday ? '▶ 繼續' : '▶ 開始';
+    btn.className = 'btn btn-primary';
+  }
+  $('finishDayBtn').hidden = !hasToday;
+
+  // 今天的每一段
+  if (hasToday) {
+    $('segList').innerHTML = today.segments.map((seg, i) =>
+      '<div class="seg"><span class="n">第 ' + (i + 1) + ' 段</span>' +
+        '<span class="t">' + App.esc(seg.started_at.slice(11)) + ' → ' +
+          (seg.ended_at ? App.esc(seg.ended_at.slice(11)) : '計時中') + '</span>' +
+        '<span class="d" data-seg="' + seg.id + '">' + fmtDuration(segSeconds(seg)) + '</span>' +
+        (seg.ended_at
+          ? '<button type="button" class="x" data-del="' + seg.id + '" title="刪除這段">✕</button>'
+          : '<span class="x"></span>') +
+      '</div>').join('');
+  } else {
+    $('segList').innerHTML = '';
+  }
+
+  // 之前還沒送出的日子（例如昨天忘了送）
+  const earlier = TIMER.days.filter(d => d.work_date !== TIMER.today);
+  $('timerPending').innerHTML = earlier.map(d =>
+    '<div class="alert alert-warn" style="display:flex;justify-content:space-between;' +
+      'align-items:center;gap:.6rem;flex-wrap:wrap;">' +
+      '<span><b>' + App.esc(d.work_date) + '</b> 還有 ' + fmtHuman(daySeconds(d)) +
+        ' 的工時尚未送出</span>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-confirm="' +
+        App.esc(d.work_date) + '">確認送出</button>' +
+    '</div>').join('');
+
+  tickTimer();
+}
+
+/* 每秒更新畫面上的數字（不打 API） */
+function tickTimer() {
+  if (!TIMER) return;
+  const today = timerDay(TIMER.today);
+  $('timerTotal').textContent = fmtDuration(today ? daySeconds(today) : 0);
+  if (TIMER.running && TIMER.running_since) {
+    $('timerSub').textContent = '這一段從 ' + TIMER.running_since.slice(11, 16) + ' 開始';
+  } else if (today && today.segments.length) {
+    $('timerSub').textContent = '共 ' + today.segments.length + ' 段，按「繼續」接著累計';
+  } else {
+    $('timerSub').textContent = '';
+  }
+  if (today) {
+    today.segments.forEach(seg => {
+      if (seg.ended_at) return;
+      const el = document.querySelector('[data-seg="' + seg.id + '"]');
+      if (el) el.textContent = fmtDuration(segSeconds(seg));
+    });
+  }
+  if (CONFIRM_DATE && !$('formSection').hidden) {
+    const el = $('recapTotal');
+    const day = timerDay(CONFIRM_DATE);
+    if (el && day) el.textContent = fmtHuman(daySeconds(day));
+  }
+}
+
+async function timerAction(path, opts) {
+  const btn = $('timerMainBtn');
+  btn.disabled = true;
+  try {
+    const res = await App.api(path, opts || { method: 'POST', body: {} });
+    setTimer(res.timer);
+    return res;
+  } catch (err) {
+    App.err(err.message);
+    refreshTimer();
+    return null;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function refreshTimer() {
+  try {
+    const res = await App.api('/api/timer');
+    setTimer(res.timer);
+  } catch (_) { /* 下次再試 */ }
+}
+
 /* ---------- 畫面切換 ---------- */
-function showForm() {
+function showHome() {
   stopPoll();
   CURRENT = null;
+  CONFIRM_DATE = null;
+  $('timerSection').hidden = false;
+  $('formSection').hidden = true;
+  $('resultSection').hidden = true;
+  $('formalSection').hidden = true;
+  renderTimer();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* date 有值 = 確認送出那天的累計工時；沒有 = 手動補登時段 */
+function showForm(date) {
+  stopPoll();
+  CURRENT = null;
+  CONFIRM_DATE = date || null;
+  $('timerSection').hidden = true;
   $('formSection').hidden = false;
   $('resultSection').hidden = true;
   $('formalSection').hidden = true;
   $('formMsg').innerHTML = '';
-  $('dateInput').value = App.dateStr(new Date());
-  refreshDateBadge();
-  refreshHours();
+
+  const manual = !CONFIRM_DATE;
+  $('manualFields').hidden = !manual;
+  // 藏起來的欄位不能擋住表單驗證
+  ['dateInput', 'startInput', 'endInput'].forEach(id => { $(id).disabled = !manual; });
+  $('timerRecap').hidden = manual;
+  $('stampBtn').disabled = false;
+
+  if (manual) {
+    $('formTitle').textContent = '手動補登時段';
+    $('formHint').textContent = '忘了按開始時才用這裡。送出後時間戳由伺服器蓋上，無法事後補改。';
+    $('stampBtn').textContent = '蓋章送出';
+    $('dateInput').value = App.dateStr(new Date());
+    refreshDateBadge();
+    refreshHours();
+  } else {
+    const day = timerDay(CONFIRM_DATE);
+    $('formTitle').textContent = '確認並送出當日總工時';
+    $('formHint').textContent = '確認下面的計時明細沒問題，填寫工作內容後送出。' +
+      '送出後時間戳由伺服器蓋上，無法事後補改。';
+    $('stampBtn').textContent = '確認送出當日總工時';
+    const segs = day ? day.segments : [];
+    $('timerRecap').innerHTML =
+      '<div class="recap-row"><span class="k">日期</span><span class="v">' +
+        App.esc(CONFIRM_DATE) + '　<span class="badge ' + dayType(CONFIRM_DATE).cls + '">' +
+        App.esc(dayType(CONFIRM_DATE).text) + '</span></span></div>' +
+      segs.map((seg, i) =>
+        '<div class="recap-row"><span class="k">第 ' + (i + 1) + ' 段</span>' +
+          '<span class="v mono">' + App.esc(seg.started_at.slice(11)) + ' → ' +
+          (seg.ended_at ? App.esc(seg.ended_at.slice(11)) : '送出時自動暫停') +
+          '</span></div>').join('') +
+      '<div class="recap-row"><span class="k">當日總工時</span>' +
+        '<span class="v" style="color:var(--amber);font-size:1.1rem;" id="recapTotal">' +
+        (day ? fmtHuman(daySeconds(day)) : '—') + '</span></div>';
+  }
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function showResult(record) {
   CURRENT = record;
+  $('timerSection').hidden = true;
   $('formSection').hidden = true;
   $('resultSection').hidden = false;
   $('formalSection').hidden = true;
@@ -305,6 +500,7 @@ function showResult(record) {
 
 function showFormal() {
   const r = CURRENT;
+  $('timerSection').hidden = true;
   $('resultSection').hidden = true;
   $('formalSection').hidden = false;
   $('formalSuccess').innerHTML = '';
@@ -315,6 +511,10 @@ function showFormal() {
     ['加班日期', App.esc(r.work_date) + '　<span class="badge ' +
       dayType(r.work_date).cls + '">' + App.esc(r.day_type_text) + '</span>'],
     ['時段', App.esc(r.start_time) + ' - ' + App.esc(r.end_time) + '（' + r.hours + ' 小時）'],
+    ...(r.segments && r.segments.length
+      ? [['計時明細', r.segments.map((s, i) => '第 ' + (i + 1) + ' 段 ' +
+          App.esc(s.start.slice(0, 5)) + '→' + App.esc(s.end.slice(0, 5))).join('<br>')]]
+      : []),
     ['內容', App.esc(r.content)],
     ['登記時間戳', App.esc(r.stamped_at)],
     ['直屬主管', App.esc(r.approver_name) + '　' + App.esc(r.decided_at || '')],
@@ -430,28 +630,34 @@ $('logForm').addEventListener('submit', async (e) => {
   const btn = $('stampBtn');
   const msg = $('formMsg');
   msg.innerHTML = '';
+  const label = btn.textContent;
   btn.disabled = true;
   btn.textContent = '蓋章中…';
+  const body = {
+    content: $('contentInput').value.trim(),
+    user_name: $('nameInput').value.trim(),
+    approver_id: $('approverSelect').value || null,
+    dept_head_id: $('deptHeadSelect').value || null,
+  };
+  if (CONFIRM_DATE) {
+    body.source = 'timer';
+    body.work_date = CONFIRM_DATE;
+  } else {
+    body.work_date = $('dateInput').value;
+    body.start_time = $('startInput').value;
+    body.end_time = $('endInput').value;
+  }
   try {
-    const res = await App.api('/api/overtime', {
-      body: {
-        work_date: $('dateInput').value,
-        start_time: $('startInput').value,
-        end_time: $('endInput').value,
-        content: $('contentInput').value.trim(),
-        user_name: $('nameInput').value.trim(),
-        approver_id: $('approverSelect').value || null,
-        dept_head_id: $('deptHeadSelect').value || null,
-      },
-    });
+    const res = await App.api('/api/overtime', { body: body });
     $('contentInput').value = '';
+    if (res.timer) setTimer(res.timer);
     showResult(res.record);
     loadHistory();
   } catch (err) {
     msg.innerHTML = '<div class="alert alert-error">' + App.esc(err.message) + '</div>';
   } finally {
     btn.disabled = false;
-    btn.textContent = '蓋章送出';
+    btn.textContent = label;
   }
 });
 
@@ -493,7 +699,44 @@ $('formalForm').addEventListener('submit', async (e) => {
 });
 
 $('backToResult').addEventListener('click', () => { if (CURRENT) showResult(CURRENT); });
-$('newOneBtn').addEventListener('click', showForm);
+$('newOneBtn').addEventListener('click', showHome);
+$('cancelFormBtn').addEventListener('click', showHome);
+
+$('timerMainBtn').addEventListener('click', () => {
+  if (!TIMER) return;
+  timerAction(TIMER.running ? '/api/timer/pause' : '/api/timer/start');
+});
+
+/* 「今天做完了」：先暫停，再進確認畫面 */
+$('finishDayBtn').addEventListener('click', async () => {
+  if (TIMER && TIMER.running) {
+    const res = await timerAction('/api/timer/pause');
+    if (!res) return;
+  }
+  showForm(TIMER.today);
+});
+
+$('segList').addEventListener('click', async (e) => {
+  const id = e.target.getAttribute && e.target.getAttribute('data-del');
+  if (!id) return;
+  if (!confirm('要刪除這一段計時嗎？（例如忘了按暫停）\n刪除會留在操作紀錄裡。')) return;
+  await timerAction('/api/timer/segments/' + id, { method: 'DELETE', body: {} });
+});
+
+$('timerPending').addEventListener('click', (e) => {
+  const date = e.target.getAttribute && e.target.getAttribute('data-confirm');
+  if (date) showForm(date);
+});
+
+$('manualLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  showForm(null);
+});
+
+/* 換回這個分頁時重新抓一次，其他裝置按的開始／暫停才會同步 */
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshTimer();
+});
 
 $('voidBtn').addEventListener('click', async () => {
   if (!CURRENT) return;
@@ -507,6 +750,10 @@ $('voidBtn').addEventListener('click', async () => {
     CURRENT = res.record;
     renderStepper(CURRENT);
     loadHistory();
+    if (CURRENT.segments && CURRENT.segments.length) {
+      refreshTimer();
+      App.ok('這天的計時已回到「尚未送出」，可以修正後重新送出');
+    }
   } catch (err) { App.err(err.message); }
 });
 
@@ -526,7 +773,7 @@ $('endInput').addEventListener('input', refreshHours);
 /* ---------- 啟動 ---------- */
 (async () => {
   tickClock();
-  setInterval(tickClock, 1000);
+  setInterval(() => { tickClock(); tickTimer(); }, 1000);
   try {
     const data = await App.api('/api/bootstrap');
     App.me = data.me;
@@ -540,7 +787,8 @@ $('endInput').addEventListener('input', refreshHours);
     fillPeopleSelects(data.defaults || {});
     renderRouting();
     tickClock();
-    showForm();
+    if (data.timer) setTimer(data.timer);
+    showHome();
     renderHistory(data.records || []);
 
     $('pageFooter').innerHTML = App.me.mail_mode === 'smtp'
