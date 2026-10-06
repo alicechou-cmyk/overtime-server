@@ -37,6 +37,12 @@ const Proof = {
       ['加班日期', record.work_date + '　' + record.day_type_text],
       ['加班時段', record.start_time + ' - ' + record.end_time +
         '（共 ' + record.hours + ' 小時）'],
+    ];
+    if (record.segments && record.segments.length) {
+      rows.push(['計時明細', record.segments.map((s, i) =>
+        '第' + (i + 1) + '段 ' + s.start.slice(0, 5) + '→' + s.end.slice(0, 5)).join('、')]);
+    }
+    rows.push(
       ['加班內容', record.content],
       ['系統時間戳', record.stamped_at + '（登記當下由伺服器寫入，不可修改）'],
       ['直屬主管', record.approver_name +
@@ -44,8 +50,7 @@ const Proof = {
       ['主管確認時間', record.decided_at || '—'],
       ['主管備註', record.decision_comment || '（無）'],
       ['部門主管', record.dept_head_name || '（未指定）'],
-      ['目前狀態', record.status_text],
-    ];
+      ['目前狀態', record.status_text]);
     if (record.applied_at) rows.push(['正式申請時間', record.applied_at]);
 
     // 先量高度

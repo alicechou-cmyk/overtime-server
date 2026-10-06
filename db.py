@@ -20,7 +20,7 @@ DB_PATH = os.path.join(DATA_DIR, "overtime.db")
 _DSN = os.environ.get("DATABASE_URL", "").strip()
 
 # 這些資料表有 id 自動編號欄位；Postgres 需要靠 RETURNING id 才拿得到 lastrowid
-_ID_TABLES = ("users", "user_cc", "records", "mails", "audit")
+_ID_TABLES = ("users", "user_cc", "records", "mails", "audit", "work_segments")
 
 
 def use_postgres():
@@ -106,11 +106,25 @@ CREATE TABLE IF NOT EXISTS records(
   apply_note       TEXT    NOT NULL DEFAULT '',
   voided_at        TEXT,
   void_reason      TEXT    NOT NULL DEFAULT '',
-  client_ip        TEXT    NOT NULL DEFAULT ''
+  client_ip        TEXT    NOT NULL DEFAULT '',
+  segments         TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_records_user ON records(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_records_approver ON records(approver_id, status);
 CREATE INDEX IF NOT EXISTS idx_records_token ON records(approve_token);
+
+-- 計時器：「開始 → 暫停 → 繼續」的每一段。時間一律由伺服器蓋。
+-- ended_at 是 NULL = 正在計時；record_id 是 NULL = 還沒送出成加班登記。
+CREATE TABLE IF NOT EXISTS work_segments(
+  id         {pk},
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  work_date  TEXT    NOT NULL,
+  started_at TEXT    NOT NULL,
+  ended_at   TEXT,
+  record_id  INTEGER REFERENCES records(id),
+  client_ip  TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_segments_user ON work_segments(user_id, record_id);
 
 CREATE TABLE IF NOT EXISTS mails(
   id         {pk},
@@ -313,6 +327,7 @@ MIGRATIONS = [
     ("records", "dept_head_id", "INTEGER"),
     ("records", "dept_head_name", "TEXT NOT NULL DEFAULT ''"),
     ("records", "dept_head_email", "TEXT NOT NULL DEFAULT ''"),
+    ("records", "segments", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -458,3 +473,8 @@ def init_db(seed_demo=None):
         log_audit(conn, "system", "init_db", detail="建立資料庫（{}）".format(backend_name()))
 
     return info
+
+
+def parse_ts(s):
+    """把 now_str() 存下來的字串轉回 datetime。"""
+    return datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
